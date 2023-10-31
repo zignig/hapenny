@@ -8,10 +8,12 @@ dependencies = [
     "amaranth[builtin-yosys]@git+https://github.com/amaranth-lang/amaranth",
     "amaranth-boards@git+https://github.com/amaranth-lang/amaranth-boards",
     "yowasp-yosys",
+    "rich",
+    
 ]
 
-[project.optional-dependencies]
-debug = ["jtagtap"]
+#[project.optional-dependencies]
+#debug = ["jtagtap"]
 
 [build-system]
 requires = ["pdm-backend"]
