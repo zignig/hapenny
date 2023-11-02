@@ -1,12 +1,15 @@
+import argparse
+
 from amaranth import *
 from amaranth.sim import Simulator, Delay, Settle
 from amaranth.back import verilog
 from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 
-from hapenny.cpu16 import Cpu
+from hapenny.chonk.cpu import Cpu
 from hapenny.bus import BusPort, partial_decode, SimpleFabric
 from hapenny import *
+from hapenny.chonk.mem32 import BasicMemory
 
 class TestPhase(Enum):
     INIT = 0
@@ -14,64 +17,37 @@ class TestPhase(Enum):
     RUN = 2
     CHECK = 3
 
-class TestMemory(Component):
-    bus: In(BusPort(addr = 8, data = 16))
-
-    inspect: In(BusPort(addr = 8, data = 16))
-
+class TestMemory(BasicMemory):
     def __init__(self, contents):
-        super().__init__()
-
-        self.m = Memory(
-            width = 16,
-            depth = 256,
-            name = "testram",
-            init = contents,
+        super().__init__(
+            contents = contents,
+            depth = 128,
         )
 
+        # make a second bus port
+        self.inspect = BusPort(
+            addr = self.bus.cmd.payload.addr.shape().width + 2,
+            data = 32,
+        ).flip().create()
+
     def elaborate(self, platform):
-        m = Module()
+        m = super().elaborate(platform)
 
-        m.submodules.m = self.m
-
-        rp = self.m.read_port(transparent = False)
-        wp = self.m.write_port(granularity = 8)
-
-        m.d.comb += [
-            rp.addr.eq(self.bus.cmd.payload.addr),
-            rp.en.eq(self.bus.cmd.valid & (self.bus.cmd.payload.lanes == 0b00)),
-
-            wp.addr.eq(self.bus.cmd.payload.addr),
-            wp.data.eq(self.bus.cmd.payload.data),
-            wp.en[0].eq(self.bus.cmd.valid & self.bus.cmd.payload.lanes[0]),
-            wp.en[1].eq(self.bus.cmd.valid & self.bus.cmd.payload.lanes[1]),
-        ]
-
-        m.d.comb += [
-            self.bus.resp.eq(rp.data),
-        ]
-
-        # Do it all again for the inspect port
-
+        # Create a second read/write port.
         inspect_rp = self.m.read_port(transparent = False)
         inspect_wp = self.m.write_port(granularity = 8)
 
         m.d.comb += [
-            inspect_rp.addr.eq(self.inspect.cmd.payload.addr[1:]),
+            inspect_rp.addr.eq(self.inspect.cmd.payload.addr[2:]),
             inspect_rp.en.eq(self.inspect.cmd.valid &
                              (self.inspect.cmd.payload.lanes == 0)),
 
-            inspect_wp.addr.eq(self.inspect.cmd.payload.addr[1:]),
+            inspect_wp.addr.eq(self.inspect.cmd.payload.addr[2:]),
             inspect_wp.data.eq(self.inspect.cmd.payload.data),
-            inspect_wp.en[0].eq(self.inspect.cmd.valid &
-                                self.inspect.cmd.payload.lanes[0]),
-            inspect_wp.en[1].eq(self.inspect.cmd.valid &
-                                self.inspect.cmd.payload.lanes[1]),
-        ]
-
-        m.d.comb += [
             self.inspect.resp.eq(inspect_rp.data),
         ]
+        for i, lane in enumerate(self.inspect.cmd.payload.lanes):
+            m.d.comb += inspect_wp.en[i].eq(self.inspect.cmd.valid & lane)
 
         return m
 
@@ -101,33 +77,23 @@ def single_step():
     # do not generate halt during fetch state
     yield
     yield from halt()
-    # Subtract 1 here to exclude the trailing fetch state where the halt was
-    # acknowledged.
-    return (yield cycle_counter) - 1 - start
+    # Subtract 4 here to not count the fetch cycle to refill the pipeline.
+    return (yield cycle_counter) - 2 - start
 
-def write_ureg(reg, value):
-    yield uut.debug.reg_write.payload.addr.eq(reg)
+def write_reg(reg, value):
+    yield uut.debug.reg_write.payload.reg.eq(reg)
     yield uut.debug.reg_write.payload.value.eq(value)
     yield uut.debug.reg_write.valid.eq(1)
     yield
     yield uut.debug.reg_write.valid.eq(0)
 
-def write_reg(reg, value):
-    yield from write_ureg(reg, value & 0xFFFF)
-    yield from write_ureg(reg | 0x20, value >> 16)
-
-def read_ureg(reg):
+def read_reg(reg):
     yield uut.debug.reg_read.payload.eq(reg)
     yield uut.debug.reg_read.valid.eq(1)
     yield
     yield uut.debug.reg_read.valid.eq(0)
     yield Settle()
-    return (yield uut.debug.reg_value.payload)
-
-def read_reg(reg):
-    bottom = yield from read_ureg(reg)
-    top = yield from read_ureg(reg | 0x20)
-    return bottom | (top << 16)
+    return (yield uut.debug.reg_value)
 
 def write_pc(value):
     yield uut.debug.pc_write.payload.eq(value)
@@ -141,13 +107,8 @@ def read_pc():
 
 def write_mem(addr, value):
     yield mem.inspect.cmd.payload.addr.eq(addr)
-    yield mem.inspect.cmd.payload.data.eq(value & 0xFFFF)
-    yield mem.inspect.cmd.payload.lanes.eq(0b11)
-    yield mem.inspect.cmd.valid.eq(1)
-    yield
-    yield mem.inspect.cmd.payload.addr.eq(addr + 2)
-    yield mem.inspect.cmd.payload.data.eq(value >> 16)
-    yield mem.inspect.cmd.payload.lanes.eq(0b11)
+    yield mem.inspect.cmd.payload.data.eq(value)
+    yield mem.inspect.cmd.payload.lanes.eq(0b1111)
     yield mem.inspect.cmd.valid.eq(1)
     yield
     yield mem.inspect.cmd.payload.lanes.eq(0)
@@ -158,19 +119,17 @@ def read_mem(addr):
     yield mem.inspect.cmd.payload.lanes.eq(0)
     yield mem.inspect.cmd.valid.eq(1)
     yield
-    yield mem.inspect.cmd.payload.addr.eq(addr + 2)
-    yield mem.inspect.cmd.valid.eq(1)
-    yield Settle()
-    bottom = yield mem.inspect.resp
-    yield
     yield mem.inspect.cmd.valid.eq(0)
     yield Settle()
-    top = yield mem.inspect.resp
+    return (yield mem.inspect.resp)
 
-    return bottom | (top << 16)
-
-def test_inst(name, inst, *, before = {}, after = {}, stop_at = None):
-    print(f"{name} ... ", end='')
+def test_inst(name, inst, *, before = {}, after = {}, stop_after = None):
+    if args.filter is not None and args.filter not in name:
+        return
+    if args.trace:
+        print(f"{name} ... ")
+    else:
+        print(f"{name} ... ", end='')
     yield phase.eq(TestPhase.SETUP)
     for r in range(1, 32):
         if r not in before:
@@ -203,15 +162,19 @@ def test_inst(name, inst, *, before = {}, after = {}, stop_at = None):
 
     yield phase.eq(TestPhase.RUN)
     cycle_count = 0
-    if stop_at is not None:
+    if stop_after is not None:
+        yield from resume()
         while True:
-            cycle_count += yield from single_step()
+            cycle_count += 1
             pc = yield from read_pc()
-            if pc == stop_at:
+            if pc == stop_after:
+                yield from halt()
                 break
+            yield
     else:
         for i in range(instruction_count):
             cycle_count += yield from single_step()
+    yield
 
     print(f"({cycle_count} cyc) ", end='')
 
@@ -222,7 +185,7 @@ def test_inst(name, inst, *, before = {}, after = {}, stop_at = None):
                 actual = yield from read_reg(key)
                 if value is not None:
                     assert actual == value, \
-                            f"r{key} should be 0x{value:x} but is 0x{actual:x}"
+                            f"r{key} should be 0x{value:08x} but is 0x{actual:08x}"
                 else:
                     print(f"r{key} (unconstrained) is 0x{actual:x}")
             elif isinstance(key, str) and key[0] == '@':
@@ -259,12 +222,17 @@ def test_inst(name, inst, *, before = {}, after = {}, stop_at = None):
 
     print("PASS")
 
+parser = argparse.ArgumentParser(
+    prog = "sim-bigcpu",
+    description = "Test bench for 32-bit model",
+)
+parser.add_argument('-f', '--filter', help = 'Filter string for instruction tests', required = False)
+parser.add_argument('-t', '--trace', help = 'Print instruction trace', required = False, action = 'store_true')
+args = parser.parse_args()
 
 if __name__ == "__main__":
     m = Module()
-    m.submodules.uut = uut = Cpu(
-        has_interrupt = "m",
-    )
+    m.submodules.uut = uut = Cpu(counters = True)
     m.submodules.mem = mem = TestMemory([
         0b00000000000000000000_00000_1101111, # JAL x0, .
     ])
@@ -277,15 +245,22 @@ if __name__ == "__main__":
     m.d.sync += cycle_counter.eq(cycle_counter + 1)
 
     m.submodules.bus = fabric = SimpleFabric([
-        partial_decode(m, mem.bus, 31),
+        partial_decode(m, mem.bus, 30),
     ])
 
     connect(m, uut.bus, fabric.bus)
 
     ports = [
         phase,
-        uut.ustate,
-        uut.hi,
+        uut.halt_request,
+        uut.halted,
+        uut.s.onehot_state,
+        uut.ew.full,
+        uut.rf.read_cmd.valid,
+        uut.rf.read_cmd.payload,
+        uut.rf.write_cmd.valid,
+        uut.rf.write_cmd.payload.reg,
+        uut.rf.write_cmd.payload.value,
         uut.bus.cmd.valid,
         uut.bus.cmd.payload.addr,
         uut.bus.cmd.payload.data,
@@ -297,11 +272,17 @@ if __name__ == "__main__":
     with open("sim-cpu.v", "w") as v:
         v.write(verilog_src)
 
+    started = False
+    stopping = False
+
     sim = Simulator(m)
     sim.add_clock(1e-6)
 
     def process():
+        global stopping
+        global started
         yield from halt()
+        started = True
         yield from test_inst(
             "LUI x1, 0xAAAAA000",
             0b10101010101010101010_00001_0110111,
@@ -364,6 +345,8 @@ if __name__ == "__main__":
             ("NE", 0b001, 0xCAFEBABE, 0xCAFEBABE, False),
             ("LT", 0b100, 0xCAFEBABE, 0x12345678, True),
             ("LT", 0b100, 0x12345678, 0xCAFEBABE, False),
+            ("LT", 0b100, 0, 0xA, True),
+            ("LT", 0b100, 0xA, 0, False),
             ("GE", 0b101, 0x12345678, 0xCAFEBABE, True),
             ("GE", 0b101, 0xCAFEBABE, 0x12345678, False),
             ("LTU", 0b110, 0x12345678, 0xCAFEBABE, True),
@@ -389,9 +372,52 @@ if __name__ == "__main__":
                     'PC': 0xF000 + (0x400 if taken else 4),
                 },
             )
+        yield from test_inst(
+            "BNEZ x2, 0x400 (taken)",
+            0b0_100000_00010_00000_001_0000_0_1100011,
+            before={
+                'PC': 0xF000,
+                2: 0xA,
+            },
+            after={
+                'PC': 0xF400,
+            },
+        )
+
+        yield from test_inst(
+            "BNEZ x2, 0x400 (not taken)",
+            0b0_100000_00010_00000_001_0000_0_1100011,
+            before={
+                'PC': 0xF000,
+                2: 0,
+            },
+            after={
+                'PC': 0xF004,
+            },
+        )
+
+        yield from test_inst(
+            "blez x2, 0x400",
+            0b0_100000_00010_00000_101_0000_0_1100011,
+            before={
+                'PC': 0xF000,
+                2: 0xA,
+            },
+            after={
+                'PC': 0xF004,
+            },
+        )
 
         load_cases = [
             ("LW", 0b010, 0x12345678, 0, 0x12345678),
+
+            ("LH", 0b001, 0x12345678, 0, 0x5678),
+            ("LH", 0b001, 0x12345678, 2, 0x1234),
+            ("LH", 0b001, 0x92B4D6F8, 0, 0xFFFF_D6F8),
+            ("LH", 0b001, 0x92B4D6F8, 2, 0xFFFF_92B4),
+
+            ("LHU", 0b101, 0x92B4D6F8, 0, 0xD6F8),
+            ("LHU", 0b101, 0x92B4D6F8, 2, 0x92B4),
 
             ("LB", 0b000, 0x12345678, 0, 0x78),
             ("LB", 0b000, 0x12345678, 1, 0x56),
@@ -402,18 +428,10 @@ if __name__ == "__main__":
             ("LB", 0b000, 0x92B4D6F8, 2, 0xFFFF_FFB4),
             ("LB", 0b000, 0x92B4D6F8, 3, 0xFFFF_FF92),
 
-            ("LW", 0b001, 0x12345678, 0, 0x5678),
-            ("LW", 0b001, 0x12345678, 2, 0x1234),
-            ("LW", 0b001, 0x92B4D6F8, 0, 0xFFFF_D6F8),
-            ("LW", 0b001, 0x92B4D6F8, 2, 0xFFFF_92B4),
-
             ("LBU", 0b100, 0x92B4D6F8, 0, 0xF8),
             ("LBU", 0b100, 0x92B4D6F8, 1, 0xD6),
             ("LBU", 0b100, 0x92B4D6F8, 2, 0xB4),
             ("LBU", 0b100, 0x92B4D6F8, 3, 0x92),
-
-            ("LHU", 0b101, 0x92B4D6F8, 0, 0xD6F8),
-            ("LHU", 0b101, 0x92B4D6F8, 2, 0x92B4),
         ]
         for mnem, opc, memword, off, reg in load_cases:
             desc = f"{mnem} x1, 0xAC(x2)"
@@ -504,50 +522,6 @@ if __name__ == "__main__":
         )
 
         yield from test_inst(
-            "SLT x1, x2, x3 (where x2 < x3)",
-            0b0000000_00011_00010_010_00001_0110011,
-            before={
-                2: 0xCAFEBABE,
-                3: 0x12345678,
-            },
-            after={
-                1: 1,
-            },
-        )
-        yield from test_inst(
-            "SLT x1, x2, x3 (where x2 >= x3)",
-            0b0000000_00011_00010_010_00001_0110011,
-            before={
-                2: 0x12345678,
-                3: 0xCAFEBABE,
-            },
-            after={
-                1: 0,
-            },
-        )
-        yield from test_inst(
-            "SLTU x1, x2, x3 (where x2 < x3)",
-            0b0000000_00011_00010_011_00001_0110011,
-            before={
-                2: 0x12345678,
-                3: 0xCAFEBABE,
-            },
-            after={
-                1: 1,
-            },
-        )
-        yield from test_inst(
-            "SLTU x1, x2, x3 (where x2 >= x3)",
-            0b0000000_00011_00010_011_00001_0110011,
-            before={
-                2: 0xCAFEBABE,
-                3: 0x12345678,
-            },
-            after={
-                1: 0,
-            },
-        )
-        yield from test_inst(
             "ADDI x1, x2, 0x123",
             0b000100100011_00010_000_00001_0010011,
             before={
@@ -610,6 +584,50 @@ if __name__ == "__main__":
         )
 
         yield from test_inst(
+            "SLT x1, x2, x3 (where x2 < x3)",
+            0b0000000_00011_00010_010_00001_0110011,
+            before={
+                2: 0xCAFEBABE,
+                3: 0x12345678,
+            },
+            after={
+                1: 1,
+            },
+        )
+        yield from test_inst(
+            "SLT x1, x2, x3 (where x2 >= x3)",
+            0b0000000_00011_00010_010_00001_0110011,
+            before={
+                2: 0x12345678,
+                3: 0xCAFEBABE,
+            },
+            after={
+                1: 0,
+            },
+        )
+        yield from test_inst(
+            "SLTU x1, x2, x3 (where x2 < x3)",
+            0b0000000_00011_00010_011_00001_0110011,
+            before={
+                2: 0x12345678,
+                3: 0xCAFEBABE,
+            },
+            after={
+                1: 1,
+            },
+        )
+        yield from test_inst(
+            "SLTU x1, x2, x3 (where x2 >= x3)",
+            0b0000000_00011_00010_011_00001_0110011,
+            before={
+                2: 0xCAFEBABE,
+                3: 0x12345678,
+            },
+            after={
+                1: 0,
+            },
+        )
+        yield from test_inst(
             "SLTI x1, x2, 0x123 (where x2 < 0x123)",
             0b001100100001_00010_010_00001_0010011,
             before={
@@ -649,7 +667,7 @@ if __name__ == "__main__":
                 1: 0,
             },
         )
-        for amt in [0, 1, 5, 31, 32]:
+        for amt in [1, 0, 5, 31, 32]:
             yield from test_inst(
                 f"SLL x1, x2, x3 (with x3={amt})",
                 0b0000000_00011_00010_001_00001_0110011,
@@ -687,6 +705,18 @@ if __name__ == "__main__":
                 },
             )
 
+        for amt in [0, 1, 5, 31, 32]:
+            yield from test_inst(
+                f"SRLI x1, x2, {amt}",
+                0b0000000_00000_00010_101_00001_0010011 | ((amt & 0x1F) << 20),
+                before={
+                    2: 0xCAFEBABE,
+                },
+                after={
+                    1: 0xCAFEBABE >> (amt & 0x1F),
+                },
+            )
+
         for x2 in [0xCAFEBABE, 0xF00D]: # one negative, one positive
             for amt in [0, 1, 5, 31, 32]:
                 if x2 & 0x80000000 == 0:
@@ -704,29 +734,6 @@ if __name__ == "__main__":
                         1: result,
                     },
                 )
-
-        yield from test_inst(
-            f"CSRRWI x1, mscratch, 17",
-            0b0011_0100_0000_10001_101_00001_1110011,
-            after={
-                1: 0,
-            },
-        )
-        yield from test_inst(
-            f"CSRRS x1, mstatus, x3(=0xFF) / read back",
-            [
-                0b0011_0000_0000_00011_010_00001_1110011,
-                0b0011_0000_0000_00000_010_00010_1110011,
-            ],
-            before={
-                3: 0xFF,
-            },
-            after={
-                1: 0,
-                2: 0b1000_1000,
-            },
-        )
-
 
         yield from test_inst(
             f"div test",
@@ -768,9 +775,9 @@ if __name__ == "__main__":
     # 89ac/44     00008067                ret
                 0x00008067,
             ],
-            stop_at = 0x44,
+            stop_after = 0x44,
             before={
-                1: 0,
+                1: 0x1230,
                 10: 100_000,
                 11: 10,
             },
@@ -779,18 +786,95 @@ if __name__ == "__main__":
                 11: 0,
                 12: 5, # empirically
                 13: 0, # empirically
-                'PC': 0x44,
+                'PC': 0x1230,
             },
         )
-        yield uut.irq.eq(1)
-        yield from resume()
-        yield
-        yield
-        yield
+        #yield from test_inst(
+        #    f"CSRRWI x1, mscratch, 17",
+        #    0b0011_0100_0000_10001_101_00001_1110011,
+        #    after={
+        #        1: 0,
+        #    },
+        #)
+        #yield from test_inst(
+        #    f"CSRRS x1, mstatus, x3(=0xFF) / read back",
+        #    [
+        #        0b0011_0000_0000_00011_010_00001_1110011,
+        #        0b0011_0000_0000_00000_010_00010_1110011,
+        #    ],
+        #    before={
+        #        3: 0xFF,
+        #    },
+        #    after={
+        #        1: 0,
+        #        2: 0b1000_1000,
+        #    },
+        #)
 
-
+        yield
+        yield
+        yield
+        stopping = True
 
     sim.add_sync_process(process)
 
+    def rvfi_tracer():
+        while not started:
+            yield
+        while not stopping:
+            yield
+            if (yield uut.rvfi.valid):
+                order = yield uut.rvfi.payload.order
+                insn = yield uut.rvfi.payload.insn
+                trap = yield uut.rvfi.payload.trap
+                halt = yield uut.rvfi.payload.halt
+
+                rs1_addr = yield uut.rvfi.payload.rs1_addr
+                rs2_addr = yield uut.rvfi.payload.rs2_addr
+                rs1_data = yield uut.rvfi.payload.rs1_rdata
+                rs2_data = yield uut.rvfi.payload.rs2_rdata
+
+                rd_addr = yield uut.rvfi.payload.rd_addr
+                rd_data = yield uut.rvfi.payload.rd_wdata
+
+                pc_rdata = yield uut.rvfi.payload.pc_rdata
+                pc_wdata = yield uut.rvfi.payload.pc_wdata
+
+                mem_addr = yield uut.rvfi.payload.mem_addr
+                mem_rmask = yield uut.rvfi.payload.mem_rmask
+                mem_wmask = yield uut.rvfi.payload.mem_wmask
+                mem_rdata = yield uut.rvfi.payload.mem_rdata
+                mem_wdata = yield uut.rvfi.payload.mem_wdata
+
+                if halt or trap:
+                    msg = "!"
+                else:
+                    msg = "-"
+
+                msg += f" {pc_rdata:08x}"
+
+                msg += f" R[{rs1_addr:02x}]:{rs1_data:08x}"
+                msg += f" R[{rs2_addr:02x}]:{rs2_data:08x}"
+                if rd_addr != 0:
+                    msg += f" R[{rd_addr:02x}]<={rd_data:08x}"
+                else:
+                    msg += " " * 16
+
+                if pc_wdata != pc_rdata + 4:
+                    msg += f" ->{pc_wdata:08x}"
+                else:
+                    msg += " " * 11
+
+                if mem_rmask != 0:
+                    msg += f"M[{mem_addr:08x}]=>{mem_rdata:08x}/{mem_rmask:04b}"
+                elif mem_wmask != 0:
+                    msg += f"M[{mem_addr:08x}]<={mem_wdata:08x}/{mem_wmask:04b}"
+                else:
+                    msg += " " * 26
+
+                print(msg)
+
+    if args.trace:
+        sim.add_sync_process(rvfi_tracer)
     with sim.write_vcd(vcd_file="test.vcd", gtkw_file="test.gtkw", traces=ports):
         sim.run()

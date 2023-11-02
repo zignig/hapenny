@@ -1,16 +1,10 @@
-# This is the smallest happeny SoC model for the Icestick, to show off its size
-# when configured with only a basic assembly program and single peripheral.
-#
-# This is not a spectacularly _useful_ configuration, and is smaller than the
-# "small" configurations most other small RV32I SoCs include, so the numbers
-# don't necessarily compare directly. It's essentially a 32-bit version of a
-# tinyAVR.
-#
-# Mostly, I use this to keep an eye on the minimum size with a circuit that
-# isn't so simple that it optimizes away in synthesis.
+# This is a demo for the "chonk" core, which is the hapenny v2
+# microarchitecture modified to have a 32-bit datapath and lower cycle count.
+# This provides a useful apples-to-apples comparison with the hapenny cores,
+# since it's using similar microarchitectural techniques and running the same
+# code.
 
 import itertools
-from functools import reduce
 import argparse
 import struct
 from pathlib import Path
@@ -23,32 +17,24 @@ from amaranth_boards.icestick import ICEStickPlatform
 import amaranth.lib.cdc
 
 from hapenny import StreamSig
-import hapenny.cpu
+import hapenny.chonk.cpu
 from hapenny.bus import BusPort, SimpleFabric, partial_decode
-from hapenny.gpio import OutputPort
-from hapenny.mem import BasicMemory
+from hapenny.chonk.gpio32 import OutputPort32
+from hapenny.chonk.mem32 import BasicMemory
 
 bootloader = Path("smallest-toggle.bin").read_bytes()
-boot_image = struct.unpack("<" + "H" * (len(bootloader) // 2), bootloader)
+boot_image = struct.unpack("<" + "I" * (len(bootloader) // 4), bootloader)
+for i, word in enumerate(boot_image):
+    print(f"{i*4:08x}  {word:08x}")
 
-image_or = reduce(lambda a, b: a|b, boot_image)
-image_and = reduce(lambda a, b: a&b, boot_image)
-
-problems = set(b for b in range(16)
-                 if image_or & (1 << b) == 0
-                 or image_and & (1 << b) != 0)
-
-if problems:
-    print("WARNING: contents of boot ROM may cause logic to be optimized out.")
-    print("Size estimates generated from such an image would be misleading.")
-    print(f"The following bit positions are constant: {problems}")
-
-# the blinky program does not use RAM at all, so we can fit it in a single block RAM.
-RAM_WORDS = 256 * 1
+# the blinky program does not use RAM at all, so we can fit it in a single
+# block RAM. We'll use half of one, wastefully, to preserve the memory map.
+RAM_WORDS = 128 * 1
 RAM_ADDR_BITS = (RAM_WORDS - 1).bit_length()
 
 # Add an extra bit to the implemented bus so we can also address I/O.
 BUS_ADDR_BITS = RAM_ADDR_BITS + 1
+print(f"BUS_ADDR_BITS = {BUS_ADDR_BITS}")
 
 class Test(Elaboratable):
     def elaborate(self, platform):
@@ -65,7 +51,7 @@ class Test(Elaboratable):
         clk12 = platform.request("clk12", dir = "-")
 
         # 15us delay, 12 MHz clock: 180 cycles
-        por_delay = int(20e-6 * 12e6)
+        por_delay = int(15e-6 * 12e6)
         m.domains += ClockDomain("por", reset_less=True, local=True)
         por_timer = Signal(range(por_delay))
         por_ready = Signal()
@@ -79,8 +65,8 @@ class Test(Elaboratable):
         m.domains += cd_sync
         m.d.comb += ResetSignal("sync").eq(~por_ready)
 
-        F = 70.5e6 # Hz
-        pll_f, pll_q = 46, 3
+        F = 55e6 # Hz
+        pll_r, pll_f, pll_q, filter_range = 0, 72, 4, 1
 
         platform.add_clock_constraint(cd_sync.clk, F)
         print(f"Configuring SoC for {F/1000000:.03} MHz")
@@ -89,10 +75,10 @@ class Test(Elaboratable):
         m.submodules.pll = Instance(
             "SB_PLL40_CORE",
             p_FEEDBACK_PATH = "SIMPLE",
-            p_DIVR = 0,
+            p_DIVR = pll_r,
             p_DIVF = pll_f,
             p_DIVQ = pll_q,
-            p_FILTER_RANGE = 1,
+            p_FILTER_RANGE = filter_range,
 
             i_REFERENCECLK = clk12.io,
             i_RESETB = 1,
@@ -100,20 +86,20 @@ class Test(Elaboratable):
         )
 
         # Ok, back to the design.
-        m.submodules.cpu = cpu = hapenny.cpu.Cpu(
-            # +1 to adjust from bus halfword addressing to CPU byte
+        m.submodules.cpu = cpu = hapenny.chonk.cpu.Cpu(
+            # +2 to adjust from bus word addressing to CPU byte
             # addressing.
-            addr_width = BUS_ADDR_BITS + 1,
+            addr_width = BUS_ADDR_BITS + 2,
             # Program addresses only need to be able to address program
             # memory, so configure the PC and fetch port to be narrower.
-            # (+1 because, again, our RAM is halfword addressed but this
-            # parameter is in bytes.)
-            prog_addr_width = RAM_ADDR_BITS + 1,
+            # (+2 because, again, our RAM is word addressed but this parameter
+            # is in bytes.)
+            prog_addr_width = RAM_ADDR_BITS + 2,
         )
         m.submodules.mem = mem = BasicMemory(depth = RAM_WORDS,
                                              contents = boot_image)
         # Make the simplest output port possible.
-        m.submodules.outport = outport = OutputPort(1, read_back = False)
+        m.submodules.outport = outport = OutputPort32(1)
         m.submodules.fabric = fabric = SimpleFabric([
             mem.bus,
             partial_decode(m, outport.bus, RAM_ADDR_BITS),
@@ -128,7 +114,7 @@ class Test(Elaboratable):
         return m
 
 parser = argparse.ArgumentParser(
-    prog = "icestick-smallest",
+    prog = "icestick-smallestbig",
     description = "Script for synthesizing smallest image for HX1K",
 )
 args = parser.parse_args()

@@ -5,11 +5,10 @@ from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 import amaranth.lib.coding
 
-from hapenny import StreamSig, AlwaysReady, csr16, mux, oneof, onehot_choice
+from hapenny import StreamSig, AlwaysReady, mux, oneof, onehot_choice
 from hapenny.decoder import ImmediateDecoder, Decoder, DecodeSignals
 from hapenny.regfile16 import RegFile16, RegWrite
 from hapenny.bus import BusPort, BusCmd
-from hapenny.csr16 import CsrFile16, CsrReg
 from hapenny.sbox import SBox, STATE_COUNT
 from hapenny.fdbox import FDBox
 from hapenny.ewbox import EWBox

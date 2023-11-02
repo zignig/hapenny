@@ -5,7 +5,7 @@ from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 from amaranth.lib.coding import Encoder, Decoder
 
-from hapenny import StreamSig, AlwaysReady
+from hapenny import StreamSig, AlwaysReady, treeduce
 
 class BusCmd(Signature):
     def __init__(self, *, addr, data):
@@ -40,6 +40,20 @@ def partial_decode(m, bus, width):
     ]
     return port
 
+def narrow_addr(m, bus, width):
+    assert width <= bus.cmd.payload.addr.shape().width, \
+            "can't use narrow_addr to make a bus wider"
+    port = BusPort(addr = width, data = bus.cmd.payload.data.shape()).flip().create()
+    m.d.comb += [
+        bus.cmd.payload.addr.eq(port.cmd.payload.addr),
+        bus.cmd.payload.data.eq(port.cmd.payload.data),
+        bus.cmd.payload.lanes.eq(port.cmd.payload.lanes),
+        bus.cmd.valid.eq(port.cmd.valid),
+
+        port.resp.eq(bus.resp),
+    ]
+    return port
+
 class SimpleFabric(Elaboratable):
     def __init__(self, devices):
         assert len(devices) > 0
@@ -61,20 +75,16 @@ class SimpleFabric(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        # Registered; set when a previously addressed device needs to make a
-        # response.
-        expecting = Signal(1)
-        # When expecting, this is the address of the device.
-        expecting_id = Signal(self.extra_bits)
+        # index of the currently selected device.
         devid = Signal(self.extra_bits)
         m.d.comb += devid.eq(self.bus.cmd.payload.addr[self.addr_bits:])
 
-        # Start expecting on any load transaction. Stop expecting otherwise.
-        m.d.sync += expecting.eq(self.bus.cmd.valid & (self.bus.cmd.payload.lanes == 0))
-        # We can update this unconditionally every cycle because (1) responses
-        # always come exactly one cycle after the request and (2) this ID is
-        # ignored if we're not expecting.
-        m.d.sync += expecting_id.eq(devid)
+        # index of the last selected device (registered).
+        last_id = Signal(self.extra_bits)
+        # Since the setting of the response mux is ignored if the CPU isn't
+        # expecting data back, we can just capture the address lines on every
+        # cycle whether it's valid or not.
+        m.d.sync += last_id.eq(devid)
 
         for (i, d) in enumerate(self.devices):
             # Fan out the incoming address, data, and lanes to every device.
@@ -93,10 +103,9 @@ class SimpleFabric(Elaboratable):
         # Fan the response data in based on who we're listening to.
         response_data = []
         for (i, d) in enumerate(self.devices):
-            data = d.resp & (expecting & (expecting_id ==
-                                                  i)).replicate(self.data_bits)
+            data = d.resp & (last_id == i).replicate(self.data_bits)
             response_data.append(data)
 
-        m.d.comb += self.bus.resp.eq(reduce(lambda a, b: a | b, response_data))
+        m.d.comb += self.bus.resp.eq(treeduce(lambda a, b: a | b, response_data))
 
         return m
