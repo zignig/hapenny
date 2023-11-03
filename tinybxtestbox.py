@@ -12,7 +12,7 @@ from amaranth_boards.tinyfpga_bx import TinyFPGABXPlatform
 import amaranth.lib.cdc
 
 from hapenny import StreamSig
-from hapenny.boxcpu import Cpu
+from hapenny.cpu import Cpu
 from hapenny.bus import BusPort, SimpleFabric, partial_decode
 from hapenny.serial import BidiUart
 from hapenny.mem import BasicMemory
@@ -63,46 +63,17 @@ class warmboot(Elaboratable):
         return m
 
 # tiny-bootloader is written in a high-level language and needs to have a stack,
-RAM_WORDS = 256 * 2
-#RAM_WORDS = 256 * 16 # (8192) bytes WOO HOO.
-RAM_ADDR_BITS = (RAM_WORDS - 1).bit_length()
-BUS_ADDR_BITS = RAM_ADDR_BITS + 1
+BOOT_ROM_WORDS = 256
+BOOT_ROM_ADDR_BITS = (BOOT_ROM_WORDS - 1).bit_length()
+RAM_ADDR_BITS =  31
 
-log.info(f"configuring for {RAM_ADDR_BITS}-bit RAM and {BUS_ADDR_BITS}-bit bus")
+bootloader = Path("icolarge-bootloader.bin").read_bytes()
+boot_image = struct.unpack("<" + "H" * (len(bootloader) // 2), bootloader)
 
-log.debug("Calc the bootload settings")
-bootloader = Path("tiny-bootloader.bin").read_bytes()
-#bootloader = Path("./tinyboot/tinyboot.bin").read_bytes()
-boot_image = struct.unpack("<" + "h" * (len(bootloader) // 2), bootloader)
+assert len(boot_image) <= BOOT_ROM_WORDS, \
+        f"bootloader is {len(boot(image))} words long, too big for boot ROM"
+log.info("Memory is %s bytes",BOOT_ROM_WORDS*2)
 
-log.debug("All these calculation are in half words (16bits)")
-
-boot_length = 2 ** len(boot_image).bit_length()
-mem_size = RAM_WORDS
-
-log.debug("Bootimage length : %s",len(boot_image))
-log.debug("Bootimage length (bit ceiling): %s",boot_length)
-
-log.info("Ram Size :%s words",mem_size)
-
-leader = (0,) *(( mem_size - boot_length))
-log.debug("Leader (zeros): %s",len(leader))
-
-residual = (0,) * ((boot_length - len(boot_image)))
-log.debug("Residual (zeros): %s",len(residual))
-boot_image = leader + boot_image + residual
-
-log.debug(boot_image)
-
-log.info("Memory is %s bytes",RAM_WORDS*2)
-## Fix the position of the boot loader
-# place at bottom of the rams
-
-# leader = (0,) * ((2**RAM_ADDR_BITS) - 512)
-# residual = 512 - len(boot_image)
-# boot_image = leader + boot_image
-# print(residual,boot_image)
-# #print(boot_image,len(boot_image))
 
 class Test(Elaboratable):
     def __init__(self):
@@ -114,21 +85,22 @@ class Test(Elaboratable):
 
         # Ok, back to the design.
         log.info("Create Cpu")
-        log.critical("Reset vector is : %s 16bit.",len(leader))
         m.submodules.cpu = cpu = Cpu(
             # execute from the bootloader dump.
-            reset_vector =  len(leader),
+            reset_vector = 0,
             # +1 to adjust from bus halfword addressing to CPU byte addressing.
-            addr_width = BUS_ADDR_BITS + 1,
+            addr_width =  15
             # Program addresses only need to be able to address program memory,
             # so configure the PC and fetch port to be narrower. (+1 because,
             # again, our RAM is halfword addressed but this parameter is in
             # bytes.)
-            prog_addr_width = RAM_ADDR_BITS + 1,
         )
         log.info("Create Memory")
-        m.submodules.mem = mem = BasicMemory(depth = RAM_WORDS,
+        m.submodules.mainmem = mainmem = BasicMemory(depth=256 * 17)
+        m.submodules.mem = bootmem = BasicMemory(depth = BOOT_ROM_WORDS,
                                              contents = boot_image)
+        
+    
         # Set the UART for 8x oversample instead of the default 16, to save some
         # logic.
         log.info("Create UART")
@@ -136,9 +108,15 @@ class Test(Elaboratable):
                                             oversample = 2,
                                             clock_freq = F)
         log.info("Assemble Fabric")
+        m.submodules.iofabric = iofabric = SimpleFabric([
+            partial_decode(m, bootmem.bus, 11),     # 0x____0000
+            partial_decode(m, uart.bus, 11),        # 0x____1000
+        #    partial_decode(m, outport.bus, 11),     # 0x____2000
+        #    partial_decode(m, inport.bus, 11) ,     # 0x____3000
+        ])
         m.submodules.fabric = fabric = SimpleFabric([
-            mem.bus,
-            partial_decode(m, uart.bus, RAM_ADDR_BITS),
+            mainmem.bus,
+            partial_decode(m, iofabric.bus, 13),
         ])
 
         connect(m, cpu.bus, fabric.bus)

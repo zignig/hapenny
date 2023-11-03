@@ -1,6 +1,6 @@
 MEMORY {
-    PROGMEM (rwx): ORIGIN = 0x8000, LENGTH = 512
-    RAM (rw): ORIGIN = 0x0000, LENGTH = 32K
+    PROGMEM (rwx): ORIGIN = 7680, LENGTH = 512
+    RAM (rw): ORIGIN = 0x0000, LENGTH = 7680
 }
 
 EXTERN(__start);

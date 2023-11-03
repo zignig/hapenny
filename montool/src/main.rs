@@ -59,6 +59,14 @@ enum SubCmd {
         #[clap(long)]
         then_echo: bool,
     },
+    Run {
+        ///Write and Call
+        #[clap(value_parser = parse_int::parse::<u32>)]
+        address: u32,
+        image_file: PathBuf,
+        #[clap(long)]
+        then_echo: bool,
+    }
 }
 
 fn main() -> Result<()> {
@@ -112,62 +120,71 @@ fn main() -> Result<()> {
                 .context("sending PUT")?;
         }
         SubCmd::Write { address, image_file } => {
-            let mut image = std::fs::read(&image_file)?;
-            while image.len() % 4 != 0 {
-                image.push(0);
-            }
-            // load addr register
-            let mut cmd = [3, 0, 0, 0, 0];
-            cmd[1..].copy_from_slice(&address.to_le_bytes());
-            do_cmd(&mut port, &cmd)
-                .context("loading A")?;
-            let bar = ProgressBar::new(image.len() as u64);
-            for chunk in image.chunks(256) {
-                // load count register
-                let word_count = u32::try_from(chunk.len() / 4)?;
-                let mut cmd = [4, 0, 0, 0, 0];
-                cmd[1..].copy_from_slice(&word_count.to_le_bytes());
-                do_cmd(&mut port, &cmd)
-                    .context("loading C")?;
-                let mut packet = vec![1];
-                packet.extend_from_slice(chunk);
-                // deposit the data.
-                do_cmd(&mut port, &packet)
-                    .context("sending PUT")?;
-                bar.inc(chunk.len() as u64);
-            }
-            bar.finish();
+            cmd_write(image_file, address, &mut port)?;
         }
         SubCmd::Call { address, then_echo } => {
-            // load addr register
-            let mut cmd = [3, 0, 0, 0, 0];
-            cmd[1..].copy_from_slice(&address.to_le_bytes());
-            do_cmd(&mut port, &cmd)
-                .context("loading A")?;
-            // go!
-            do_cmd(&mut port, &[0])
-                .context("sending CALL")?;
-
-            if then_echo {
-                let stdout = std::io::stdout();
-                let mut stdout = stdout.lock();
-                loop {
-                    let mut b = [0];
-                    match port.read_exact(&mut b) {
-                        Ok(()) => {
-                            write!(stdout, "{}", b[0] as char)?;
-                            stdout.flush()?;
-                        },
-                        Err(e) if e.kind() == ErrorKind::TimedOut => {
-                            // meh
-                        }
-                        other => other?,
-                    }
-                }
-            }
+            cmd_call(address, port, then_echo)?;
+        }
+        SubCmd::Run { address, image_file, then_echo } =>{
+            cmd_write(image_file, address, &mut port)?;
+            cmd_call(address, port, then_echo)?;
         }
     }
 
+    Ok(())
+}
+
+fn cmd_call(address: u32, mut port: Box<dyn SerialPort>, then_echo: bool) -> Result<(), anyhow::Error> {
+    let mut cmd = [3, 0, 0, 0, 0];
+    cmd[1..].copy_from_slice(&address.to_le_bytes());
+    do_cmd(&mut port, &cmd)
+        .context("loading A")?;
+    do_cmd(&mut port, &[0])
+        .context("sending CALL")?;
+    Ok(if then_echo {
+        let stdout = std::io::stdout();
+        let mut stdout = stdout.lock();
+        loop {
+            let mut b = [0];
+            match port.read_exact(&mut b) {
+                Ok(()) => {
+                    write!(stdout, "{}", b[0] as char)?;
+                    stdout.flush()?;
+                },
+                Err(e) if e.kind() == ErrorKind::TimedOut => {
+                    // meh
+                }
+                other => other?,
+            }
+        }
+    })
+}
+
+fn cmd_write(image_file: PathBuf, address: u32, port: &mut Box<dyn SerialPort>) -> Result<(), anyhow::Error> {
+    let mut image = std::fs::read(&image_file)?;
+    while image.len() % 4 != 0 {
+        image.push(0);
+    }
+    let mut cmd = [3, 0, 0, 0, 0];
+    cmd[1..].copy_from_slice(&address.to_le_bytes());
+    do_cmd(port, &cmd)
+        .context("loading A")?;
+    let bar = ProgressBar::new(image.len() as u64);
+    for chunk in image.chunks(256) {
+        // load count register
+        let word_count = u32::try_from(chunk.len() / 4)?;
+        let mut cmd = [4, 0, 0, 0, 0];
+        cmd[1..].copy_from_slice(&word_count.to_le_bytes());
+        do_cmd(port, &cmd)
+            .context("loading C")?;
+        let mut packet = vec![1];
+        packet.extend_from_slice(chunk);
+        // deposit the data.
+        do_cmd(port, &packet)
+            .context("sending PUT")?;
+        bar.inc(chunk.len() as u64);
+    }
+    bar.finish();
     Ok(())
 }
 

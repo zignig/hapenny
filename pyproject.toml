@@ -7,6 +7,7 @@ requires-python = "~=3.8"
 dependencies = [
     "amaranth[builtin-yosys]@git+https://github.com/amaranth-lang/amaranth",
     "amaranth-boards@git+https://github.com/amaranth-lang/amaranth-boards",
+    "amaranth-soc@git+https://github.com/amaranth-lang/amaranth-soc",
     "yowasp-yosys",
     "rich",
     
