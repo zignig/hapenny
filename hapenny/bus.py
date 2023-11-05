@@ -5,7 +5,12 @@ from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 from amaranth.lib.coding import Encoder, Decoder
 
+from amaranth_soc.memory import MemoryMap
+
 from hapenny import StreamSig, AlwaysReady, treeduce
+
+
+
 
 class BusCmd(Signature):
     def __init__(self, *, addr, data):
@@ -61,7 +66,12 @@ class SimpleFabric(Elaboratable):
         addr_bits = max(p.cmd.payload.addr.shape().width for p in devices)
         sig = BusPort(addr = addr_bits, data = data_bits).flip()
         print(f"fabric configured for {addr_bits} addr bits, {data_bits} data bits")
+        addr = 0
         for i, d in enumerate(devices):
+            bits = d.cmd.payload.addr.shape().width
+            print(d)
+            print(addr)
+            addr += 2**bits * 2
             assert sig.is_compliant(d), \
                     f"device #{i} does not have {addr_bits} addr bits: {d.cmd.payload.addr.shape()}"
         self.devices = devices
@@ -85,8 +95,9 @@ class SimpleFabric(Elaboratable):
         # expecting data back, we can just capture the address lines on every
         # cycle whether it's valid or not.
         m.d.sync += last_id.eq(devid)
-
+        addr = 0
         for (i, d) in enumerate(self.devices):
+
             # Fan out the incoming address, data, and lanes to every device.
             m.d.comb += [
                 d.cmd.payload.addr.eq(self.bus.cmd.payload.addr),

@@ -75,6 +75,7 @@ fn main() -> Result<()> {
         SubCmd::Ping => {
             do_cmd(&mut port, &[5])
                 .context("pinging")?;
+            println!("pong back");
         }
         SubCmd::Peek { address } => {
             // load addr register

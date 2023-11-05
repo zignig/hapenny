@@ -1,0 +1,1 @@
+/opt/hapenny/tinyboot/target/riscv32i-unknown-none-elf/release/tinyboot: /opt/hapenny/tinyboot/build.rs /opt/hapenny/tinyboot/link.x /opt/hapenny/tinyboot/src/main.rs /opt/hapenny/tinyboot/target/riscv32i-unknown-none-elf/release/build/hapenny-tinyboot-943a4d9948605add/out/peripherals.rs
