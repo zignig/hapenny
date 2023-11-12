@@ -24,12 +24,14 @@ class Widget(Component):
     def add_reg(self, name, reg):
         self._registers.append((name,))
 
-    def _build(self):
+    def _build(self,padding=None):
         if hasattr(self, "_registers"):
             self._bit_width = len(self._registers).bit_length()
         else:
             self._bit_width = self._bits
-        #print(type(self).__qualname__, self._bit_width, self._data_width)
+        if padding is not None:
+            self._bit_width = padding
+        # print(type(self).__qualname__, self._bit_width, self._data_width)
         self._name = type(self).__qualname__ + "_" + str(type(self)._count)
         type(self)._count += 1
         if not hasattr(self, "_memory_map"):
@@ -37,7 +39,7 @@ class Widget(Component):
                 name=self._name, addr_width=self._bit_width, data_width=self._data_width
             )
 
-        #print("build ", self)
+        # print("build ", self)
         if hasattr(self, "_registers"):
             for i in self._registers:
                 self._memory_map.add_resource(object(), name=i[0], size=1)
@@ -49,12 +51,13 @@ class Widget(Component):
 
 class TurboEncabulator(Widget):
     _section = "peripheral"
-
+    active: In(1)
     def __init__(self, turbos):
         super().__init__()
         self.add_reg("TURBOS", object())
         self.add_reg("ACTIVATE", object())
         self.add_reg("STUFF", object())
+        self.add_reg('other',object())
         for i in range(turbos):
             self.add_reg("T" + str(i), object())
 
@@ -66,7 +69,6 @@ class Uart(Widget):
         super().__init__()
         self.add_reg("TX", object())
         self.add_reg("RX", object())
-        print(type(self).__qualname__)
 
 
 class FakeMem(Widget):
@@ -89,25 +91,27 @@ class ProgMem(FakeMem):
 class WidgetFabric(Elaboratable):
     _section = "fabric"
 
-    def __init__(self, name, devices):
-        self._memory_map = MemoryMap(addr_width=32, data_width=16)
-        self.name = name
+    def __init__(self,width, devices,padding=None):
         self._devices = devices
         self._sections = {}
-        # build all the devices
+        self.width = width
+        # build all the devices and collect sections
         for d in devices:
-            #print(self._sections, d)
+            # print(self._sections, d)
             if d._section is not None:
                 if d._section in self._sections:
                     self._sections[d._section].append(d)
                 else:
                     self._sections[d._section] = [d]
-            d._build()
-        # for d in devices:
-        #     print(d, d._bit_width)
+            d._build(padding)
+        # create the bus 
+        for d in devices:
+            print(d, d._bit_width)
         print(self._sections)
+        self._memory_map = MemoryMap(name='bob',addr_width=width, data_width=16)
+
         for i, d in enumerate(devices):
-            #print(i, d,d._name)
+            # print(i, d,d._name)
             self._memory_map.add_window(d._memory_map)
 
     def show(self):
@@ -127,10 +131,12 @@ if __name__ == "__main__":
     uart = Uart()
     uart2 = Uart()
     uart3 = Uart()
-    fm = FakeMem(1023)
+    fm = FakeMem(8192)
     fm2 = ProgMem(512)
     te = TurboEncabulator(3)
 
-    owf = WidgetFabric("test", [])
-    wf = WidgetFabric("base", [fm, fm2, uart, uart2, uart3, te])
+    owf = WidgetFabric(6, [])
+
+    wf = WidgetFabric(16, [fm, fm2, uart],padding=11)#, uart2, uart3, te])
+
     wf.show()
