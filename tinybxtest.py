@@ -42,7 +42,7 @@ class Test(Elaboratable):
         m.submodules.mainmem = mainmem = BasicMemory(depth=256 * 16)
         m.submodules.mem = bootmem = BasicMemory(depth=RAM_WORDS, contents=boot_image)
         m.submodules.uart = uart = BidiUart(
-            baud_rate=115_200, oversample=2, clock_freq=F
+            baud_rate=57600, oversample=8, clock_freq=F
         )
 
         m.submodules.iofabric = iofabric = SimpleFabric(

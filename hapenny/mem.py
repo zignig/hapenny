@@ -5,10 +5,13 @@ from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 from amaranth.lib.coding import Encoder, Decoder
 
+from amaranth_soc.memory import MemoryMap
+
 from hapenny import StreamSig, AlwaysReady, mux
 from hapenny.bus import BusPort
 
-class BasicMemory(Elaboratable):
+
+class BasicMemory(Component):
     """A dead-simple 16-bit-wide memory with the Hapenny bus interface.
 
     This uses an Amaranth generic memory internally, which relies on inference
@@ -33,11 +36,7 @@ class BasicMemory(Elaboratable):
         'depth' words, and a 16-bit data path.
     """
 
-    def __init__(self, *,
-                 depth = None,
-                 contents = [],
-                 read_only = False):
-        super().__init__()
+    def __init__(self, *, depth=None, contents=[], read_only=False,name="mem"):
 
         if depth is None:
             assert len(contents) > 0, "either depth or contents must be provided"
@@ -45,24 +44,25 @@ class BasicMemory(Elaboratable):
 
         addr_bits = (depth - 1).bit_length()
 
-        self.bus = BusPort(addr = addr_bits, data = 16).flip().create()
-
         self.m = Memory(
-            width = 16,
-            depth = depth,
-            name = "basicram",
-            init = contents,
+            width=16,
+            depth=depth,
+            name="basicram",
+            init=contents,
         )
 
-        self.read_only = False
+        self.read_only = read_only
+        super().__init__({"bus": Out(BusPort(addr=addr_bits, data=16))})
+        # memory map is in bytes not half words
+        self.memory_map = MemoryMap(addr_width=addr_bits +1 , data_width=16)
+        self.memory_map.add_resource(self,name=(name,), size=depth*2)
 
     def elaborate(self, platform):
         m = Module()
 
         m.submodules.m = self.m
 
-        rp = self.m.read_port(transparent = False)
-
+        rp = self.m.read_port(transparent=False)
 
         m.d.comb += [
             rp.addr.eq(self.bus.cmd.payload.addr),
@@ -71,7 +71,7 @@ class BasicMemory(Elaboratable):
         ]
 
         if not self.read_only:
-            wp = self.m.write_port(granularity = 8)
+            wp = self.m.write_port(granularity=8)
             m.d.comb += [
                 wp.addr.eq(self.bus.cmd.payload.addr),
                 wp.data.eq(self.bus.cmd.payload.data),
@@ -80,6 +80,7 @@ class BasicMemory(Elaboratable):
             ]
 
         return m
+
 
 class SpramMemory(Component):
     """A single 256 kiB / 32 kiB SPRAM on the UP5K.
@@ -96,29 +97,31 @@ class SpramMemory(Component):
     ----------
     bus: bus interface with 14 address bits.
     """
-    bus: In(BusPort(addr = 14, data = 16))
+
+    bus: In(BusPort(addr=14, data=16))
 
     def elaborate(self, platform):
         m = Module()
 
         m.submodules.spram = Instance(
             "SB_SPRAM256KA",
-            i_CLOCK = ClockSignal("sync"),
-            i_ADDRESS = self.bus.cmd.payload.addr,
-            i_DATAIN = self.bus.cmd.payload.data,
+            i_CLOCK=ClockSignal("sync"),
+            i_ADDRESS=self.bus.cmd.payload.addr,
+            i_DATAIN=self.bus.cmd.payload.data,
             # Weirdly, write enables are at the nibble level.
-            i_MASKWREN = Cat(
+            i_MASKWREN=Cat(
                 self.bus.cmd.payload.lanes[0],
                 self.bus.cmd.payload.lanes[0],
                 self.bus.cmd.payload.lanes[1],
                 self.bus.cmd.payload.lanes[1],
             ),
-            i_WREN = self.bus.cmd.payload.lanes != 0,
-            i_CHIPSELECT = self.bus.cmd.valid,
-            i_POWEROFF = 1, # active fucking low
-            i_STANDBY = 0,
-            i_SLEEP = 0,
-            o_DATAOUT = self.bus.resp,
+            i_WREN=self.bus.cmd.payload.lanes != 0,
+            i_CHIPSELECT=self.bus.cmd.valid,
+            i_POWEROFF=1,  # active fucking low
+            i_STANDBY=0,
+            i_SLEEP=0,
+            o_DATAOUT=self.bus.resp,
         )
-
+        self.memory_map = MemoryMap(addr_width=15, data_width=16)
+        self.memory_map.add_resource(self,name=("spmem",), size=2**15)
         return m

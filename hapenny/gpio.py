@@ -3,6 +3,8 @@ from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 from amaranth.lib.coding import Encoder, Decoder
 
+from amaranth_soc.memory import MemoryMap
+
 from hapenny import StreamSig, AlwaysReady, mux, oneof
 from hapenny.bus import BusPort
 
@@ -76,10 +78,13 @@ class OutputPort(Component):
     """
     bus: In(BusPort(addr = 2, data = 16))
 
-    def __init__(self, pins, read_back = True):
+    def __init__(self, pins, read_back = True,name="output"):
         super().__init__()
         self.pins = Signal(pins)
         self.read_back = read_back
+
+        self.memory_map = MemoryMap(addr_width=2,data_width=16)
+        self.memory_map.add_resource(self,name=(name,),size=2)
 
     def elaborate(self, platform):
         m = Module()
@@ -131,9 +136,12 @@ class InputPort(Component):
     """
     bus: In(BusPort(addr = 0, data = 16))
 
-    def __init__(self, pins):
+    def __init__(self, pins,name="input"):
         super().__init__()
         self.pins = Signal(pins)
+        
+        self.memory_map = MemoryMap(addr_width=2,data_width=16)
+        self.memory_map.add_resource(self,name=(name,),size=2)
 
     def elaborate(self, platform):
         m = Module()

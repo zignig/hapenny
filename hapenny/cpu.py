@@ -5,6 +5,8 @@ from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 import amaranth.lib.coding
 
+from amaranth_soc.memory import MemoryMap
+
 from hapenny import StreamSig, AlwaysReady, mux, oneof, onehot_choice
 from hapenny.decoder import ImmediateDecoder, Decoder, DecodeSignals
 from hapenny.regfile16 import RegFile16, RegWrite
@@ -13,6 +15,8 @@ from hapenny.sbox import SBox, STATE_COUNT
 from hapenny.fdbox import FDBox
 from hapenny.ewbox import EWBox
 from hapenny.rvfi import Rvfi, Mode, Ixl
+
+from hapenny.bus import SMCFabric
 
 # Note: all debug port signals are directional from the perspective of the DEBUG
 # PROBE, not the CPU.
@@ -101,6 +105,55 @@ class Cpu(Component):
             prog_addr_width = self.prog_addr_width,
             counters = counters,
         )
+        self.memory_map = MemoryMap(addr_width=addr_width-1,data_width=16)
+        self.devices = {}
+
+    def add_component(self,device):
+        if isinstance(device,list):
+            for i in device:
+                self.devices[i.memory_map] = i
+                self.memory_map.add_window(i.memory_map)
+        else:
+            self.devices[device.memory_map] = device
+            self.memory_map.add_window(device.memory_map)
+   
+    def show(self): 
+        # display the memory mappings
+        # print("bus")
+        # print(self.bus)
+        # print()
+        # print("devices")
+        # for (m,d) in self.devices.items():
+        #     print(d)
+        # print()
+        print("mapping")
+        for sub_map, (sub_pat, sub_ratio) in self.memory_map.window_patterns():
+            print()
+            print(sub_map,sub_pat)
+            sub = self.devices[sub_map]
+            print(sub)
+        print()
+        print("addresses")
+        for m  in self.memory_map.all_resources():
+            #print("{} 0x{:04x} 0x{:04x}".format(m.path,m.start,m.end))
+            print("{} {} {}".format(m.path,m.start,m.end))
+
+
+    def build(self,m):
+        # build the decoder , bind the devices
+        # based on amaranth-soc decoder.
+
+        # attach the submodules
+        for d in self.devices.values():
+            m.submodules += d
+
+        # build and attach the fabric
+        m.submodules.smcfabric = fabric = SMCFabric(self)
+
+        # connect the CPU to the fabric
+        connect(m,self.bus,fabric.bus)
+
+
 
     def elaborate(self, platform):
         m = Module()

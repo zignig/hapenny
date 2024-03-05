@@ -3,8 +3,13 @@ from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 from amaranth.lib.coding import Encoder, Decoder
 
+from amaranth_soc.memory import MemoryMap
+
 from hapenny import StreamSig, AlwaysReady, mux, oneof
 from hapenny.bus import BusPort
+
+# optional FIFOs
+from amaranth.lib.fifo import SyncFIFO
 
 class ReceiveCore(Component):
     rx: In(1)
@@ -13,10 +18,11 @@ class ReceiveCore(Component):
     empty: Out(1)
     read_strobe: In(1)
 
-    def __init__(self, oversample = 16):
+    def __init__(self, oversample = 16,fifo=None):
         super().__init__()
-
+        self.fifo = None
         self.oversample = oversample
+
 
     def elaborate(self, platform):
         m = Module()
@@ -25,7 +31,8 @@ class ReceiveCore(Component):
         bits_left = Signal(range(8))
         timer = Signal(range(self.oversample))
         have_data = Signal(1)
-
+        
+        # split fifo here and below
         m.d.comb += [
             self.empty.eq(~have_data),
         ]
@@ -213,6 +220,7 @@ class ReceiveOnlyUart(Component):
     def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None):
         super().__init__()
 
+        self.fifo = fifo
         self.baud_rate = baud_rate
         self.clock_freq = clock_freq
 
@@ -231,13 +239,10 @@ class ReceiveOnlyUart(Component):
             rxr.sample_clock.eq(clkdiv.out),
             rxr.read_strobe.eq(self.bus.cmd.valid & ~self.bus.cmd.payload.lanes.any()),
         ]
-
         m.d.sync += [
             self.bus.resp[:8].eq(rxr.rdr),
             self.bus.resp[15].eq(rxr.empty),
         ]
-
-        return m
 
 class BidiUart(Component):
     """A slightly less crappy UART.
@@ -254,12 +259,16 @@ class BidiUart(Component):
     tx: In(1)
     rx: In(1)
 
-    def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None):
+    def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None,rxfifo=None):
         super().__init__()
 
+        self.rxfifo = rxfifo
         self.baud_rate = baud_rate
         self.oversample = oversample
         self.clock_freq = clock_freq
+
+        self.memory_map = MemoryMap(addr_width=1, data_width=16)
+        self.memory_map.add_resource(self,name=("serial",), size=2)
 
     def elaborate(self, platform):
         m = Module()
@@ -272,7 +281,7 @@ class BidiUart(Component):
         )
 
         # Receive state machine.
-        m.submodules.rxr = rxr = ReceiveCore(oversample = self.oversample)
+        m.submodules.rxr = rxr = ReceiveCore(oversample = self.oversample,fifo=self.rxfifo)
         m.d.comb += [
             rxr.rx.eq(self.rx),
             rxr.sample_clock.eq(clkdiv.out),
@@ -306,6 +315,8 @@ class BidiUart(Component):
             & ~self.bus.cmd.payload.lanes.any()
             & ~self.bus.cmd.payload.addr[0]
         )
+
+
 
         # Write logic for TX side.
         m.d.comb += txr.thr_write.payload.eq(self.bus.cmd.payload.data[:8])
