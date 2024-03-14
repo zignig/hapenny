@@ -5,8 +5,12 @@ from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 from amaranth.lib.coding import Encoder, Decoder
 
+from amaranth_soc.memory import MemoryMap
+
 from hapenny import StreamSig, AlwaysReady, treeduce
 
+import logging
+log = logging.getLogger(__name__)
 
 class BusCmd(Signature):
     def __init__(self, *, addr, data):
@@ -116,25 +120,42 @@ class SimpleFabric(Elaboratable):
 
 
 class SMCFabric(Elaboratable):
-    def __init__(self, cpu):
-        self.cpu = cpu
-        self.bus = BusPort(addr= cpu.addr_width - 1 , data=16).flip().create()
+    # Slightly More Complicated Fabric
+    def __init__(self, devices,name="fabric"):
+        # Create the memory map for the fabric
+        # find the max width
+        log.debug("create {}".format(name))
+        self.name = name
+        max_width = max(p.memory_map.addr_width for p in devices)
+        #self.memory_map = MemoryMap(addr_width=max_width+1,data_width=16,name=name)
+        self.memory_map = MemoryMap(addr_width=31,data_width=16,name=name)
+        self.devices = {} 
+        for device in devices:
+            log.debug("\t {}".format(device.name))
+            self.devices[device.memory_map] = device
+            self.memory_map.add_window(device.memory_map)
+        #self.bus = BusPort(addr=max_width+1 , data=16).flip().create()
+        self.bus = BusPort(addr=31, data=16).flip().create()
 
     def elaborate(self, platform):
         m = Module()
-        cpu_bus = self.cpu.bus
+        # attach  the devices 
+        for d in self.devices.values():
+            m.submodules[d.name] = d
+            print(d)
+        print('__')
+        # response may need to be fanned it with |=
         with m.Switch(self.bus.cmd.payload.addr):
-            for sub_map, (sub_pat, sub_ratio) in self.cpu.memory_map.window_patterns():
-                sub = self.cpu.devices[sub_map].bus
+            for sub_map, (sub_pat, sub_ratio) in self.memory_map.window_patterns():
+                print(self.devices[sub_map])
+                sub = self.devices[sub_map].bus
                 # Bind the outgoing data and lanes
                 m.d.comb += [
                     sub.cmd.payload.addr.eq(self.bus.cmd.payload.addr),
                     sub.cmd.payload.data.eq(self.bus.cmd.payload.data),
                     sub.cmd.payload.lanes.eq(self.bus.cmd.payload.lanes),
                 ]
-                print(len(sub_pat))
                 with m.Case(sub_pat):
                     m.d.comb += sub.cmd.valid.eq(self.bus.cmd.valid)
                     m.d.comb += self.bus.resp.eq(sub.resp)
-
         return m

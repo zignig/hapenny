@@ -83,7 +83,8 @@ class OutputPort(Component):
         self.pins = Signal(pins)
         self.read_back = read_back
 
-        self.memory_map = MemoryMap(addr_width=2,data_width=16)
+        self.name = name
+        self.memory_map = MemoryMap(addr_width=2,data_width=16,name=name)
         self.memory_map.add_resource(self,name=(name,),size=2)
 
     def elaborate(self, platform):
@@ -139,8 +140,8 @@ class InputPort(Component):
     def __init__(self, pins,name="input"):
         super().__init__()
         self.pins = Signal(pins)
-        
-        self.memory_map = MemoryMap(addr_width=2,data_width=16)
+        self.name = name
+        self.memory_map = MemoryMap(addr_width=2,data_width=16,name=name)
         self.memory_map.add_resource(self,name=(name,),size=2)
 
     def elaborate(self, platform):

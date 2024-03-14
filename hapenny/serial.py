@@ -259,7 +259,7 @@ class BidiUart(Component):
     tx: In(1)
     rx: In(1)
 
-    def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None,rxfifo=None):
+    def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None,rxfifo=None,name="serial"):
         super().__init__()
 
         self.rxfifo = rxfifo
@@ -267,8 +267,9 @@ class BidiUart(Component):
         self.oversample = oversample
         self.clock_freq = clock_freq
 
-        self.memory_map = MemoryMap(addr_width=1, data_width=16)
-        self.memory_map.add_resource(self,name=("serial",), size=2)
+        self.name = name 
+        self.memory_map = MemoryMap(addr_width=1, data_width=16,name=name)
+        self.memory_map.add_resource(self,name=(name,), size=2)
 
     def elaborate(self, platform):
         m = Module()

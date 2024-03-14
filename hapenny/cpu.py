@@ -18,6 +18,9 @@ from hapenny.rvfi import Rvfi, Mode, Ixl
 
 from hapenny.bus import SMCFabric
 
+import logging
+log = logging.getLogger(__name__)
+
 # Note: all debug port signals are directional from the perspective of the DEBUG
 # PROBE, not the CPU.
 DebugPort = Signature({
@@ -106,18 +109,18 @@ class Cpu(Component):
             counters = counters,
         )
         self.memory_map = MemoryMap(addr_width=addr_width-1,data_width=16)
-        self.devices = {}
+        self.devices = []
+        self._mapped = False 
 
-    def add_component(self,device):
+    def add_device(self,device):
         if isinstance(device,list):
             for i in device:
-                self.devices[i.memory_map] = i
-                self.memory_map.add_window(i.memory_map)
+                self.devices.append(i)
         else:
-            self.devices[device.memory_map] = device
-            self.memory_map.add_window(device.memory_map)
+            self.devices.append(device)
    
-    def show(self): 
+    def show(self):
+        self.create_map()
         # display the memory mappings
         # print("bus")
         # print(self.bus)
@@ -126,32 +129,39 @@ class Cpu(Component):
         # for (m,d) in self.devices.items():
         #     print(d)
         # print()
-        print("mapping")
+        log.debug("")
+        log.debug("Memory Mapping")
+        log.debug("")
         for sub_map, (sub_pat, sub_ratio) in self.memory_map.window_patterns():
-            print()
-            print(sub_map,sub_pat)
-            sub = self.devices[sub_map]
-            print(sub)
-        print()
-        print("addresses")
+            log.debug("%s \t %s",sub_map.name,sub_pat)
+            sub = self.device_map[sub_map]
+        log.debug("")
+        log.debug("Device Address Ranges")
+        log.debug("")
         for m  in self.memory_map.all_resources():
-            #print("{} 0x{:04x} 0x{:04x}".format(m.path,m.start,m.end))
-            print("{} {} {}".format(m.path,m.start,m.end))
-
-
+            p =  list(map(" ".join, m.path))
+            log.debug("{} {} - {}".format(m.path,m.start,m.end))
+            
+    def create_map(self):
+        # generate the memory map and device tree
+        # this is separated so the map can be generated without
+        # elaborating into gateware
+        if not self._mapped:
+            self.main_fabric = fabric =  SMCFabric(self.devices)
+            self.memory_map = fabric.memory_map
+            self.device_map = fabric.devices
+            self._mapped = True
+    
     def build(self,m):
-        # build the decoder , bind the devices
-        # based on amaranth-soc decoder.
-
-        # attach the submodules
-        for d in self.devices.values():
-            m.submodules += d
-
+        # create the map 
+        self.create_map()
+        # attach the cpu itself 
+        m.submodules.cpu = self
         # build and attach the fabric
-        m.submodules.smcfabric = fabric = SMCFabric(self)
+        m.submodules.smcfabric = self.main_fabric
 
         # connect the CPU to the fabric
-        connect(m,self.bus,fabric.bus)
+        connect(m,self.bus,self.main_fabric.bus)
 
 
 

@@ -36,7 +36,7 @@ class BasicMemory(Component):
         'depth' words, and a 16-bit data path.
     """
 
-    def __init__(self, *, depth=None, contents=[], read_only=False,name="mem"):
+    def __init__(self, *, depth=None, contents=[], read_only=False, name="mem"):
 
         if depth is None:
             assert len(contents) > 0, "either depth or contents must be provided"
@@ -50,12 +50,12 @@ class BasicMemory(Component):
             name="basicram",
             init=contents,
         )
-
+        self.name = name
         self.read_only = read_only
         super().__init__({"bus": Out(BusPort(addr=addr_bits, data=16))})
         # memory map is in bytes not half words
-        self.memory_map = MemoryMap(addr_width=addr_bits +1 , data_width=16)
-        self.memory_map.add_resource(self,name=(name,), size=depth*2)
+        self.memory_map = MemoryMap(addr_width=addr_bits + 1, data_width=16,name=name)
+        self.memory_map.add_resource(self, name=(name,), size=depth * 2)
 
     def elaborate(self, platform):
         m = Module()
@@ -123,5 +123,5 @@ class SpramMemory(Component):
             o_DATAOUT=self.bus.resp,
         )
         self.memory_map = MemoryMap(addr_width=15, data_width=16)
-        self.memory_map.add_resource(self,name=("spmem",), size=2**15)
+        self.memory_map.add_resource(self, name=("spmem",), size=2**15)
         return m
