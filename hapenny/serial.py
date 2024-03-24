@@ -8,6 +8,10 @@ from amaranth_soc.memory import MemoryMap
 from hapenny import StreamSig, AlwaysReady, mux, oneof
 from hapenny.bus import BusPort
 
+import logging
+
+log = logging.getLogger(__name__)
+
 # optional FIFOs
 from amaranth.lib.fifo import SyncFIFO
 
@@ -261,7 +265,7 @@ class BidiUart(Component):
 
     def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None,rxfifo=None,name="serial"):
         super().__init__()
-
+        log.info("uart width 1")
         self.rxfifo = rxfifo
         self.baud_rate = baud_rate
         self.oversample = oversample
@@ -270,7 +274,7 @@ class BidiUart(Component):
         self.name = name 
         self.memory_map = MemoryMap(addr_width=1, data_width=16,name=name)
         self.memory_map.add_resource(self,name=(name,), size=2)
-
+        
     def elaborate(self, platform):
         m = Module()
 

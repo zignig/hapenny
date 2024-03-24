@@ -10,6 +10,9 @@ from amaranth_soc.memory import MemoryMap
 from hapenny import StreamSig, AlwaysReady, mux
 from hapenny.bus import BusPort
 
+import logging
+
+log = logging.getLogger(__name__)
 
 class BasicMemory(Component):
     """A dead-simple 16-bit-wide memory with the Hapenny bus interface.
@@ -47,14 +50,16 @@ class BasicMemory(Component):
         self.m = Memory(
             width=16,
             depth=depth,
-            name="basicram",
+            name=name,
             init=contents,
         )
+        
         self.name = name
         self.read_only = read_only
         super().__init__({"bus": Out(BusPort(addr=addr_bits, data=16))})
         # memory map is in bytes not half words
-        self.memory_map = MemoryMap(addr_width=addr_bits + 1, data_width=16,name=name)
+        log.info(f"{name} memory - width {addr_bits}")
+        self.memory_map = MemoryMap(addr_width=addr_bits + 1, data_width=16, name=name)
         self.memory_map.add_resource(self, name=(name,), size=depth * 2)
 
     def elaborate(self, platform):
@@ -82,6 +87,20 @@ class BasicMemory(Component):
         return m
 
 
+class BootMem(BasicMemory):
+    """A subclass of the Basic mem for the bootloader"""
+
+    def __init__(self, boot_image,image_size=None):
+        if image_size == None:
+            image_size = 2 ** (len(boot_image)).bit_length()
+        else:
+            image_size = image_size
+        super().__init__(
+            depth=image_size, read_only=True, contents=boot_image, name="boot"
+        )
+
+
+
 class SpramMemory(Component):
     """A single 256 kiB / 32 kiB SPRAM on the UP5K.
 
@@ -97,8 +116,13 @@ class SpramMemory(Component):
     ----------
     bus: bus interface with 14 address bits.
     """
-
     bus: In(BusPort(addr=14, data=16))
+
+    def __init__(self,name="spram"):
+        super().__init__()
+        self.name = name 
+        self.memory_map = MemoryMap(addr_width=15, data_width=16,name=name)
+        self.memory_map.add_resource(self, name=(name,), size=2**15)
 
     def elaborate(self, platform):
         m = Module()
@@ -122,6 +146,5 @@ class SpramMemory(Component):
             i_SLEEP=0,
             o_DATAOUT=self.bus.resp,
         )
-        self.memory_map = MemoryMap(addr_width=15, data_width=16)
-        self.memory_map.add_resource(self, name=("spmem",), size=2**15)
+
         return m

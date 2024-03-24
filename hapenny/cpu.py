@@ -19,34 +19,38 @@ from hapenny.rvfi import Rvfi, Mode, Ixl
 from hapenny.bus import SMCFabric
 
 import logging
+
 log = logging.getLogger(__name__)
 
 # Note: all debug port signals are directional from the perspective of the DEBUG
 # PROBE, not the CPU.
-DebugPort = Signature({
-    # Register read port. The CPU asserts READY on this port when it is halted
-    # and the register file is available for inspection. Debug probes should
-    # place a register number on the payload signals and assert VALID; the
-    # response will come on reg_value on the next cycle.
-    'reg_read': Out(StreamSig(5 + 1)),
-    # Value that was read from the reg_read port above.
-    'reg_value': In(16),
-    # Register write command. Works roughly like reg_read, e.g. only READY when
-    # the CPU is halted.
-    'reg_write': Out(StreamSig(RegWrite(5 + 1))),
-    # PC output from CPU. This is always valid. If the CPU's PC is narrower
-    # than 32 bits (the prog_addr_width parameter) then its value is
-    # zero-extended on this port.
-    'pc': In(32),
-    # PC override signal. Becomes READY when the CPU is halted; assert a new
-    # value with VALID here to change the next instruction that will be
-    # fetched. If the PC is narrower than 32 bits (the prog_addr_width
-    # parameter) then the higher bits in this path are ignored.
-    'pc_write': Out(StreamSig(32)),
-    # State output from CPU. This is a one-hot encoding of the CPU's internal
-    # execution state, mostly intended for testbenches.
-    'state': In(STATE_COUNT),
-})
+DebugPort = Signature(
+    {
+        # Register read port. The CPU asserts READY on this port when it is halted
+        # and the register file is available for inspection. Debug probes should
+        # place a register number on the payload signals and assert VALID; the
+        # response will come on reg_value on the next cycle.
+        "reg_read": Out(StreamSig(5 + 1)),
+        # Value that was read from the reg_read port above.
+        "reg_value": In(16),
+        # Register write command. Works roughly like reg_read, e.g. only READY when
+        # the CPU is halted.
+        "reg_write": Out(StreamSig(RegWrite(5 + 1))),
+        # PC output from CPU. This is always valid. If the CPU's PC is narrower
+        # than 32 bits (the prog_addr_width parameter) then its value is
+        # zero-extended on this port.
+        "pc": In(32),
+        # PC override signal. Becomes READY when the CPU is halted; assert a new
+        # value with VALID here to change the next instruction that will be
+        # fetched. If the PC is narrower than 32 bits (the prog_addr_width
+        # parameter) then the higher bits in this path are ignored.
+        "pc_write": Out(StreamSig(32)),
+        # State output from CPU. This is a one-hot encoding of the CPU's internal
+        # execution state, mostly intended for testbenches.
+        "state": In(STATE_COUNT),
+    }
+)
+
 
 class Cpu(Component):
     """An RV32I core using a 16-bit datapath, with overlapped fetch and
@@ -77,93 +81,94 @@ class Cpu(Component):
     halted (out): raised when the CPU has halted.
     rvfi (out): RISC-V Formal Interface trace port.
     """
+
     halt_request: In(1)
     halted: Out(1)
 
     debug: In(DebugPort)
     rvfi: Out(AlwaysReady(Rvfi()))
 
-    def __init__(self, *,
-                 reset_vector = 0,
-                 addr_width = 32,
-                 counters = False,
-                 prog_addr_width = None):
+    def __init__(
+        self,
+        *,
+        reset_vector=0,
+        addr_width=32,
+        counters=False,
+        prog_addr_width=None,
+    ):
         super().__init__()
 
         # Capture and derive parameter values
         self.addr_width = addr_width
         self.prog_addr_width = prog_addr_width or addr_width
+        self.reset_vector = reset_vector
+        self.counters = counters
 
         # Create our parameterized ports and modules
-        self.bus = BusPort(addr = addr_width - 1, data = 16).create()
+        self.bus = BusPort(addr=addr_width - 1, data=16).create()
 
         self.s = SBox()
         self.rf = RegFile16()
         self.fd = FDBox(
-            prog_addr_width = self.prog_addr_width,
+            prog_addr_width=self.prog_addr_width,
         )
         self.ew = EWBox(
-            reset_vector = reset_vector,
-            addr_width = addr_width,
-            prog_addr_width = self.prog_addr_width,
-            counters = counters,
+            reset_vector=reset_vector,
+            addr_width=addr_width,
+            prog_addr_width=self.prog_addr_width,
+            counters=counters,
         )
-        self.memory_map = MemoryMap(addr_width=addr_width-1,data_width=16)
-        self.devices = []
-        self._mapped = False 
 
-    def add_device(self,device):
-        if isinstance(device,list):
+        self.devices = []
+        self.active = {}
+        self._mapped = False
+
+    def add_device(self, device):
+        if isinstance(device, list):
             for i in device:
                 self.devices.append(i)
+                self.active[i.name] = True
         else:
             self.devices.append(device)
-   
+            self.active[device.name] = True
+
     def show(self):
         self.create_map()
-        # display the memory mappings
-        # print("bus")
-        # print(self.bus)
-        # print()
-        # print("devices")
-        # for (m,d) in self.devices.items():
-        #     print(d)
-        # print()
+
         log.debug("")
         log.debug("Memory Mapping")
         log.debug("")
         for sub_map, (sub_pat, sub_ratio) in self.memory_map.window_patterns():
-            log.debug("%s \t %s",sub_map.name,sub_pat)
+            log.debug("%s \t %s \t %s", sub_map.name, sub_pat, sub_map.addr_width)
             sub = self.device_map[sub_map]
         log.debug("")
         log.debug("Device Address Ranges")
         log.debug("")
-        for m  in self.memory_map.all_resources():
-            p =  list(map(" ".join, m.path))
-            log.debug("{} {} - {}".format(m.path,m.start,m.end))
-            
+        for m in self.memory_map.all_resources():
+            p = list(map(" ".join, m.path))
+            log.debug("{} \t {} | {}".format(m.path[0], m.start, m.end))
+
     def create_map(self):
         # generate the memory map and device tree
         # this is separated so the map can be generated without
         # elaborating into gateware
         if not self._mapped:
-            self.main_fabric = fabric =  SMCFabric(self.devices)
+            log.info("Create Fabric")
+            self.main_fabric = fabric = SMCFabric(self.devices, self.addr_width)
             self.memory_map = fabric.memory_map
             self.device_map = fabric.devices
             self._mapped = True
-    
-    def build(self,m):
-        # create the map 
+
+    def build(self, m):
+        # create the map
         self.create_map()
-        # attach the cpu itself 
+        # attach the cpu itself
         m.submodules.cpu = self
         # build and attach the fabric
         m.submodules.smcfabric = self.main_fabric
-
         # connect the CPU to the fabric
-        connect(m,self.bus,self.main_fabric.bus)
-
-
+        log.warning("Connect fabric and bus")
+        connect(m, self.bus, self.main_fabric.bus)
 
     def elaborate(self, platform):
         m = Module()
@@ -177,20 +182,16 @@ class Cpu(Component):
         m.d.comb += [
             fd.onehot_state.eq(s.onehot_state),
             fd.from_the_top.eq(ew.from_the_top),
-
             ew.onehot_state.eq(s.onehot_state),
             ew.inst_next.eq(fd.inst_next),
             ew.debug_pc_write.valid.eq(self.debug.pc_write.valid),
             # Drop the bottom two bits of any incoming PC before feeding to EW.
             ew.debug_pc_write.payload.eq(self.debug.pc_write.payload[2:]),
-
             s.from_the_top.eq(ew.from_the_top),
             s.halt_request.eq(self.halt_request),
             s.not_a_bubble.eq(ew.full),
             s.hold.eq(ew.hold),
-
             self.halted.eq(s.halted),
-
             self.debug.reg_value.eq(rf.read_resp),
             self.debug.state.eq(s.onehot_state),
             # Internal PCs never have bits 0/1, but the debug port deals in
@@ -234,11 +235,13 @@ class Cpu(Component):
         # halted.
         m.d.comb += [
             rf.read_cmd.valid.eq(
-                fd.rf_cmd.valid | ew.rf_read_cmd.valid
+                fd.rf_cmd.valid
+                | ew.rf_read_cmd.valid
                 | (self.debug.reg_read.valid & s.halted)
             ),
             rf.read_cmd.payload.eq(
-                fd.rf_cmd.payload | ew.rf_read_cmd.payload
+                fd.rf_cmd.payload
+                | ew.rf_read_cmd.payload
                 | oneof([(s.halted, self.debug.reg_read.payload)])
             ),
             ew.rf_resp.eq(rf.read_resp),
@@ -247,9 +250,7 @@ class Cpu(Component):
         # Combine the bus access ports. The debug port can't drive our bus, so
         # this is simpler.
         m.d.comb += [
-            self.bus.cmd.valid.eq(
-                fd.bus.cmd.valid | ew.bus.cmd.valid
-            ),
+            self.bus.cmd.valid.eq(fd.bus.cmd.valid | ew.bus.cmd.valid),
             # Note that this will implicitly zero-extend the FD address if it's
             # shorter than the full bus (because prog_addr_width is dialed
             # back).
@@ -262,7 +263,6 @@ class Cpu(Component):
             self.bus.cmd.payload.lanes.eq(
                 fd.bus.cmd.payload.lanes | ew.bus.cmd.payload.lanes
             ),
-
             fd.bus.resp.eq(self.bus.resp),
             ew.bus.resp.eq(self.bus.resp),
         ]
@@ -277,14 +277,11 @@ class Cpu(Component):
             rvfi.pc_next.eq(Cat(0, 0, ew.fetch_pc.payload)),
             rvfi.insn.eq(ew.debug_inst),
             rvfi.rf_read_resp_snoop.eq(rf.read_resp),
-
             rvfi.rf_read_snoop.valid.eq(rf.read_cmd.valid),
             rvfi.rf_read_snoop.payload.eq(rf.read_cmd.payload),
-
             rvfi.rf_write_snoop.valid.eq(rf.write_cmd.valid),
             rvfi.rf_write_snoop.payload.reg.eq(rf.write_cmd.payload.reg),
             rvfi.rf_write_snoop.payload.value.eq(rf.write_cmd.payload.value),
-
             rvfi.bus_snoop.valid.eq(self.bus.cmd.valid),
             rvfi.bus_snoop.payload.addr.eq(self.bus.cmd.payload.addr),
             rvfi.bus_snoop.payload.data.eq(self.bus.cmd.payload.data),
@@ -294,6 +291,7 @@ class Cpu(Component):
         connect(m, rvfi.rvfi_out, flipped(self.rvfi))
 
         return m
+
 
 class RvfiPort(Component):
     state: In(STATE_COUNT)
@@ -308,7 +306,7 @@ class RvfiPort(Component):
 
     rf_write_snoop: In(AlwaysReady(RegWrite(6)))
 
-    bus_snoop: In(AlwaysReady(BusCmd(addr = 31, data = 16)))
+    bus_snoop: In(AlwaysReady(BusCmd(addr=31, data=16)))
     bus_resp_snoop: In(16)
 
     rvfi_out: Out(AlwaysReady(Rvfi()))
@@ -335,7 +333,6 @@ class RvfiPort(Component):
                 self.rvfi_out.valid.eq(self.full),
                 self.rvfi_out.payload.order.eq(self.rvfi_out.payload.order + 1),
                 self.rvfi_out.payload.pc_wdata.eq(self.pc_next),
-
                 rs1_addr_d.eq(self.rf_read_snoop.payload[:5]),
             ]
         with m.Else():
@@ -351,7 +348,6 @@ class RvfiPort(Component):
                 self.rvfi_out.payload.mem_rdata.eq(0),
                 self.rvfi_out.payload.rd_addr.eq(0),
                 self.rvfi_out.payload.rd_wdata.eq(0),
-
                 self.register_half_mismatch.eq(0),
                 self.disjoint_memory.eq(0),
                 self.rvfi_out.payload.rs1_addr.eq(rs1_addr_d),
@@ -362,9 +358,7 @@ class RvfiPort(Component):
                 m.d.sync += [
                     self.rvfi_out.payload.rs1_rdata[:16].eq(self.rf_read_resp_snoop),
                     self.rvfi_out.payload.rs2_addr.eq(self.rf_read_snoop.payload[:5]),
-
                     self.rvfi_out.payload.pc_rdata.eq(self.pc),
-
                     self.rvfi_out.payload.insn.eq(self.insn),
                 ]
 
@@ -386,10 +380,17 @@ class RvfiPort(Component):
             with m.If(self.rf_write_snoop.valid):
                 with m.If(self.rf_write_snoop.payload.reg[5]):
                     m.d.sync += [
-                        self.rvfi_out.payload.rd_wdata[16:].eq(self.rf_write_snoop.payload.value),
-                        self.rvfi_out.payload.rd_addr.eq(self.rf_write_snoop.payload.reg[:5]),
+                        self.rvfi_out.payload.rd_wdata[16:].eq(
+                            self.rf_write_snoop.payload.value
+                        ),
+                        self.rvfi_out.payload.rd_addr.eq(
+                            self.rf_write_snoop.payload.reg[:5]
+                        ),
                     ]
-                    with m.If(self.rvfi_out.payload.rd_addr != self.rf_write_snoop.payload.reg[:5]):
+                    with m.If(
+                        self.rvfi_out.payload.rd_addr
+                        != self.rf_write_snoop.payload.reg[:5]
+                    ):
                         # register half mismatch
                         m.d.sync += [
                             self.rvfi_out.payload.halt.eq(1),
@@ -397,8 +398,12 @@ class RvfiPort(Component):
                         ]
                 with m.Else():
                     m.d.sync += [
-                        self.rvfi_out.payload.rd_wdata[:16].eq(self.rf_write_snoop.payload.value),
-                        self.rvfi_out.payload.rd_addr.eq(self.rf_write_snoop.payload.reg[:5]),
+                        self.rvfi_out.payload.rd_wdata[:16].eq(
+                            self.rf_write_snoop.payload.value
+                        ),
+                        self.rvfi_out.payload.rd_addr.eq(
+                            self.rf_write_snoop.payload.reg[:5]
+                        ),
                     ]
 
             with m.If(load_expected[1]):
@@ -417,10 +422,16 @@ class RvfiPort(Component):
             # Ignore bus activity in states 1/2 as RVFI doesn't consider fetch
             # traffic.
             with m.If(self.bus_snoop.valid & ~(self.state[1] | self.state[2])):
-                with m.If(self.rvfi_out.payload.mem_wmask.any() | self.rvfi_out.payload.mem_rmask.any()):
+                with m.If(
+                    self.rvfi_out.payload.mem_wmask.any()
+                    | self.rvfi_out.payload.mem_rmask.any()
+                ):
                     # If we've seen a halfword access already on this instruction,
                     # check the next one for consistency.
-                    with m.If(self.bus_snoop.payload.addr[1:] != self.rvfi_out.payload.mem_addr[2:]):
+                    with m.If(
+                        self.bus_snoop.payload.addr[1:]
+                        != self.rvfi_out.payload.mem_addr[2:]
+                    ):
                         # halfword accesses have not targeted the same word.
                         m.d.sync += [
                             self.rvfi_out.payload.halt.eq(1),
@@ -431,10 +442,14 @@ class RvfiPort(Component):
                     # low halfword
                     m.d.sync += [
                         # Present addresses word-aligned
-                        self.rvfi_out.payload.mem_addr.eq(Cat(0, 0, self.bus_snoop.payload.addr[1:])),
+                        self.rvfi_out.payload.mem_addr.eq(
+                            Cat(0, 0, self.bus_snoop.payload.addr[1:])
+                        ),
                         # Set low bits of masks.
                         self.rvfi_out.payload.mem_wmask[:2].eq(
-                            self.rvfi_out.payload.mem_wmask[:2] | self.bus_snoop.payload.lanes),
+                            self.rvfi_out.payload.mem_wmask[:2]
+                            | self.bus_snoop.payload.lanes
+                        ),
                         self.rvfi_out.payload.mem_rmask[:2].eq(
                             self.rvfi_out.payload.mem_rmask[:2]
                             | (~self.bus_snoop.payload.lanes.any()).replicate(2)
@@ -452,10 +467,14 @@ class RvfiPort(Component):
                     # high halfword
                     m.d.sync += [
                         # Present addresses word-aligned
-                        self.rvfi_out.payload.mem_addr.eq(Cat(0, 0, self.bus_snoop.payload.addr[1:])),
+                        self.rvfi_out.payload.mem_addr.eq(
+                            Cat(0, 0, self.bus_snoop.payload.addr[1:])
+                        ),
                         # Set high bits of masks.
                         self.rvfi_out.payload.mem_wmask[2:].eq(
-                            self.rvfi_out.payload.mem_wmask[2:] | self.bus_snoop.payload.lanes),
+                            self.rvfi_out.payload.mem_wmask[2:]
+                            | self.bus_snoop.payload.lanes
+                        ),
                         self.rvfi_out.payload.mem_rmask[2:].eq(
                             self.rvfi_out.payload.mem_rmask[2:]
                             | (~self.bus_snoop.payload.lanes.any()).replicate(2)

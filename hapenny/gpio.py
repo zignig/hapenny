@@ -76,7 +76,7 @@ class OutputPort(Component):
     bus (port): connection to bus fabric
     pins (signal array): the output pins
     """
-    bus: In(BusPort(addr = 2, data = 16))
+    bus: In(BusPort(addr = 1, data = 16))
 
     def __init__(self, pins, read_back = True,name="output"):
         super().__init__()
@@ -84,8 +84,8 @@ class OutputPort(Component):
         self.read_back = read_back
 
         self.name = name
-        self.memory_map = MemoryMap(addr_width=2,data_width=16,name=name)
-        self.memory_map.add_resource(self,name=(name,),size=2)
+        self.memory_map = MemoryMap(addr_width=1,data_width=16,name=name)
+        self.memory_map.add_resource(self,name=(name,),size=1)
 
     def elaborate(self, platform):
         m = Module()
@@ -141,8 +141,8 @@ class InputPort(Component):
         super().__init__()
         self.pins = Signal(pins)
         self.name = name
-        self.memory_map = MemoryMap(addr_width=2,data_width=16,name=name)
-        self.memory_map.add_resource(self,name=(name,),size=2)
+        self.memory_map = MemoryMap(addr_width=1,data_width=16,name=name)
+        self.memory_map.add_resource(self,name=(name,),size=1)
 
     def elaborate(self, platform):
         m = Module()

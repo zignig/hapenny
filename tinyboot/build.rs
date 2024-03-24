@@ -1,20 +1,18 @@
-use std::{env::VarError, path::PathBuf};
 use std::io::Write;
+use std::{env::VarError, path::PathBuf};
 
 use askama::Template;
 
 // Template the link file
 #[derive(Template)]
-#[template(path="link.txt")]
-struct LinkFile { 
+#[template(path = "link.txt")]
+struct LinkFile {
     stack_start: u32,
 }
 
-impl LinkFile { 
-    fn new(stack_start: u32) -> Self { 
-        Self { 
-            stack_start,
-        }
+impl LinkFile {
+    fn new(stack_start: u32) -> Self {
+        Self { stack_start }
     }
 }
 
@@ -36,9 +34,7 @@ fn main() {
             println!("cargo:warning=note: UART address not provided, defaulting to 0x200");
             0x200
         }
-        Some(text) => {
-            parse_int::parse::<u32>(&text).unwrap()
-        }
+        Some(text) => parse_int::parse::<u32>(&text).unwrap(),
     };
 
     // Stack start address
@@ -54,13 +50,11 @@ fn main() {
             println!("cargo:warning=note: TINYBOOT_STACK_START address not provided, defaulting to 0x400");
             0x400
         }
-        Some(text) => {
-            parse_int::parse::<u32>(&text).unwrap()
-        }
+        Some(text) => parse_int::parse::<u32>(&text).unwrap(),
     };
 
-    // Generate the files 
-    
+    // Generate the files
+
     // Uart include
     let mut out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     out.push("peripherals.rs");
@@ -68,7 +62,7 @@ fn main() {
     let mut f = std::fs::File::create(&out).unwrap();
     writeln!(f, "pub const UART_ADDR: u32 = 0x{addr:x};").unwrap();
 
-    // Link file include 
+    // Link file include
     let mut out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     // Tell the linker where to find it
     println!("cargo:rustc-link-search=native={}", out.display());
@@ -76,5 +70,5 @@ fn main() {
 
     let link_file = LinkFile::new(stack_start);
     let mut f = std::fs::File::create(&out).unwrap();
-    writeln!(f, "{}",link_file.render().unwrap()).unwrap();
+    writeln!(f, "{}", link_file.render().unwrap()).unwrap();
 }
