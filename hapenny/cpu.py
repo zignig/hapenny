@@ -135,18 +135,18 @@ class Cpu(Component):
     def show(self):
         self.create_map()
 
-        log.debug("")
-        log.debug("Memory Mapping")
-        log.debug("")
+        log.info("")
+        log.info("Memory Mapping")
+        log.info("")
         for sub_map, (sub_pat, sub_ratio) in self.memory_map.window_patterns():
-            log.debug("%s \t %s \t %s", sub_map.name, sub_pat, sub_map.addr_width)
+            log.info("%s \t %s \t %s", sub_map.name, sub_pat, sub_map.addr_width)
             sub = self.device_map[sub_map]
-        log.debug("")
-        log.debug("Device Address Ranges")
-        log.debug("")
+        log.info("")
+        log.info("Device Address Ranges")
+        log.info("")
         for m in self.memory_map.all_resources():
             p = list(map(" ".join, m.path))
-            log.debug("{} \t {} | {}".format(m.path[0], m.start, m.end))
+            log.info("{} \t | {:6d} | {:6d}".format(m.path[0], m.start, m.end))
 
     def create_map(self):
         # generate the memory map and device tree
@@ -171,6 +171,7 @@ class Cpu(Component):
         connect(m, self.bus, self.main_fabric.bus)
 
     def elaborate(self, platform):
+        log.info("Elaboate CPU")
         m = Module()
 
         # Make the elaborator aware of all our submodules, and wire them up.
