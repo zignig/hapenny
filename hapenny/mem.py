@@ -2,13 +2,14 @@
 
 from amaranth import *
 from amaranth.lib.wiring import *
+from amaranth.lib import wiring
 from amaranth.lib.enum import *
 from amaranth.lib.coding import Encoder, Decoder
 
 from hapenny import StreamSig, AlwaysReady, mux
 from hapenny.bus import BusPort
 
-class BasicMemory(Elaboratable):
+class BasicMemory(Component):
     """A dead-simple 16-bit-wide memory with the Hapenny bus interface.
 
     This uses an Amaranth generic memory internally, which relies on inference
@@ -37,15 +38,17 @@ class BasicMemory(Elaboratable):
                  depth = None,
                  contents = [],
                  read_only = False):
-        super().__init__()
+        
 
         if depth is None:
             assert len(contents) > 0, "either depth or contents must be provided"
             depth = len(contents)
 
-        addr_bits = (depth - 1).bit_length()
+        # save the size for memory map ( checked )
+        self.size = depth
 
-        self.bus = BusPort(addr = addr_bits, data = 16).flip().create()
+        addr_bits = (depth - 1).bit_length()
+        super().__init__({"bus":In(BusPort(addr = addr_bits, data = 16))})
 
         self.m = Memory(
             width = 16,

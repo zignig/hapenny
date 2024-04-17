@@ -86,7 +86,8 @@ class Cpu(Component):
         # Capture and derive parameter values
         self.addr_width = addr_width
         self.prog_addr_width = prog_addr_width or addr_width
-
+        self.reset_vector = reset_vector
+        
         # Create our parameterized ports and modules
         self.bus = BusPort(addr = addr_width - 1, data = 16).create()
 

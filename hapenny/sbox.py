@@ -41,13 +41,11 @@ class SBox(Component):
     halt_request: In(1)
     not_a_bubble: In(1)
 
-    onehot_state: Out(STATE_COUNT)
+    onehot_state: Out(STATE_COUNT,init=1)
     halted: Out(1)
 
     def __init__(self):
         super().__init__()
-
-        self.onehot_state.reset = 1
 
     def elaborate(self, platform):
         m = Module()
