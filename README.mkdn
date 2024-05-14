@@ -1,3 +1,6 @@
+This is a fork of the hapenny. will push changes at some point , cbiffle is busy.
+
+
 # `hapenny`: a half-width RISC-V
 
 `hapenny` is a 32-bit RISC-V CPU implementation that operates internally on
