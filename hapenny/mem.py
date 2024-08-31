@@ -12,7 +12,11 @@ from hapenny.bus import BusPort
 import struct
 from pathlib import Path
 
-import os 
+import os
+import logging
+
+log = logging.getLogger(__name__)
+
 
 class BasicMemory(Component):
     """A dead-simple 16-bit-wide memory with the Hapenny bus interface.
@@ -40,69 +44,63 @@ class BasicMemory(Component):
         'depth' words, and a 16-bit data path.
     """
 
-    def __init__(self, *,
-                 depth = None,
-                 file_name = None,
-                 contents = [],
-                 size = None,
-                 read_only = False):
-        
+    def __init__(
+        self, *, depth=None, file_name=None, contents=[], size=None, read_only=False
+    ):
+
         if depth is not None:
-            self.depth = depth 
+            self.depth = depth
 
         if size is not None:
             self.size = size
-            self.depth = size 
+            self.depth = size
 
         self.contents = contents
 
         addr_bits = (self.depth - 1).bit_length()
-        super().__init__({"bus":In(BusPort(addr = addr_bits, data = 16))})
+        super().__init__({"bus": In(BusPort(addr=addr_bits, data=16))})
 
         self.read_only = False
-        self.file_name = file_name 
+        self.file_name = file_name
 
     def _decode(self):
         bootloader = Path(self.file_name).read_bytes()
-        self.contents = struct.unpack("<" + "h" * (len(bootloader) // 2), bootloader)
-    
+        boot_image = struct.unpack("<" + "h" * (len(bootloader) // 2), bootloader)
+        return boot_image
 
     def fetch(self):
         "Load a filename"
         try:
             os.stat(self.file_name)
             # if we reach here the file exists
-            self._decode()
+            self.contents = self._decode()
         except:
-            print("file does not exist ",self.file_name)
+            log.warning(f"file does not exist {self.file_name}")
             # get the file data (Succesfull, [image contents])
             if self.build():
-                self._decode()
+                self.contents = self._decode()
             else:
                 raise Exception("File build failed")
-        
+
     ## override for building firmwares , bootloader in subclasses
     def build(self):
         return False
-    
+
     def elaborate(self, platform):
         m = Module()
 
-        if self.file_name is not None: 
-            self.contents = self.fetch()
-
-        print(self.contents)
+        if self.file_name is not None:
+            self.fetch()
         mem = Memory(
-            width = 16,
-            depth = self.depth,
-            name = "basicram",
-            init = self.contents,
+            width=16,
+            depth=self.depth,
+            name="basicram",
+            init=self.contents,
         )
 
         m.submodules += mem
 
-        rp = mem.read_port(transparent = False)
-
+        rp = mem.read_port(transparent=False)
 
         m.d.comb += [
             rp.addr.eq(self.bus.cmd.payload.addr),
@@ -111,7 +109,7 @@ class BasicMemory(Component):
         ]
 
         if not self.read_only:
-            wp = mem.write_port(granularity = 8)
+            wp = mem.write_port(granularity=8)
             m.d.comb += [
                 wp.addr.eq(self.bus.cmd.payload.addr),
                 wp.data.eq(self.bus.cmd.payload.data),
@@ -120,6 +118,7 @@ class BasicMemory(Component):
             ]
 
         return m
+
 
 class SpramMemory(Component):
     """A single 256 kiB / 32 kiB SPRAM on the UP5K.
@@ -136,29 +135,30 @@ class SpramMemory(Component):
     ----------
     bus: bus interface with 14 address bits.
     """
-    bus: In(BusPort(addr = 14, data = 16))
+
+    bus: In(BusPort(addr=14, data=16))
 
     def elaborate(self, platform):
         m = Module()
 
         m.submodules.spram = Instance(
             "SB_SPRAM256KA",
-            i_CLOCK = ClockSignal("sync"),
-            i_ADDRESS = self.bus.cmd.payload.addr,
-            i_DATAIN = self.bus.cmd.payload.data,
+            i_CLOCK=ClockSignal("sync"),
+            i_ADDRESS=self.bus.cmd.payload.addr,
+            i_DATAIN=self.bus.cmd.payload.data,
             # Weirdly, write enables are at the nibble level.
-            i_MASKWREN = Cat(
+            i_MASKWREN=Cat(
                 self.bus.cmd.payload.lanes[0],
                 self.bus.cmd.payload.lanes[0],
                 self.bus.cmd.payload.lanes[1],
                 self.bus.cmd.payload.lanes[1],
             ),
-            i_WREN = self.bus.cmd.payload.lanes != 0,
-            i_CHIPSELECT = self.bus.cmd.valid,
-            i_POWEROFF = 1, # active fucking low
-            i_STANDBY = 0,
-            i_SLEEP = 0,
-            o_DATAOUT = self.bus.resp,
+            i_WREN=self.bus.cmd.payload.lanes != 0,
+            i_CHIPSELECT=self.bus.cmd.valid,
+            i_POWEROFF=1,  # active fucking low
+            i_STANDBY=0,
+            i_SLEEP=0,
+            o_DATAOUT=self.bus.resp,
         )
 
         return m

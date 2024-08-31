@@ -148,7 +148,8 @@ class OversampleClock(Component):
         log.info(f"UART configured for {self.baud_rate} from input clock {clock_freq}, divisor = {divisor}")
         actual_freq = clock_freq / self.oversample / divisor
         freq_error = abs(actual_freq - self.baud_rate) / self.baud_rate
-        log.info(f"Actual baud rate will be: {actual_freq} (error: {freq_error * 100:.3}%)")
+        if freq_error > 1.0:
+            log.critical(f"Actual baud rate will be: {actual_freq} (error: {freq_error * 100:.3}%)")
         assert freq_error< 0.01, "Error: cannot achieve requested UART frequency"
 
         sample_clock = Signal(1)
