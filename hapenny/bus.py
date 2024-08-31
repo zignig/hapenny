@@ -7,6 +7,10 @@ from amaranth.lib.coding import Encoder, Decoder
 
 from hapenny import StreamSig, AlwaysReady, treeduce
 
+import logging
+
+log = logging.getLogger(__name__)
+
 class BusCmd(Signature):
     def __init__(self, *, addr, data):
         if isinstance(data, int):
@@ -60,10 +64,7 @@ class SimpleFabric(Elaboratable):
         data_bits = max(p.cmd.payload.data.shape().width for p in devices)
         addr_bits = max(p.cmd.payload.addr.shape().width for p in devices)
         sig = BusPort(addr = addr_bits, data = data_bits).flip()
-        print(f"fabric configured for {addr_bits} addr bits, {data_bits} data bits")
-        # for i, d in enumerate(devices):
-        #     assert sig.is_compliant(d), \
-        #             f"device #{i} does not have {addr_bits} addr bits: {d.cmd.payload.addr.shape()}"
+        log.info(f"fabric configured for {addr_bits} addr bits, {data_bits} data bits")
         self.devices = devices
         self.extra_bits = (len(devices) - 1).bit_length()
         self.addr_bits = addr_bits

@@ -9,6 +9,11 @@ from amaranth.lib.coding import Encoder, Decoder
 from hapenny import StreamSig, AlwaysReady, mux
 from hapenny.bus import BusPort
 
+import struct
+from pathlib import Path
+
+import os 
+
 class BasicMemory(Component):
     """A dead-simple 16-bit-wide memory with the Hapenny bus interface.
 
@@ -27,6 +32,7 @@ class BasicMemory(Component):
     read_only (boolean): if overridden to True, the memory will not respond to
         write strobes. This is useful for using an initialized block RAM as a
         program ROM.
+    file_name (path): path to a file to load into the memory.
 
     Attributes
     ----------
@@ -36,35 +42,66 @@ class BasicMemory(Component):
 
     def __init__(self, *,
                  depth = None,
+                 file_name = None,
                  contents = [],
+                 size = None,
                  read_only = False):
         
+        if depth is not None:
+            self.depth = depth 
 
-        if depth is None:
-            assert len(contents) > 0, "either depth or contents must be provided"
-            depth = len(contents)
+        if size is not None:
+            self.size = size
+            self.depth = size 
 
-        # save the size for memory map ( checked )
-        self.size = depth
+        self.contents = contents
 
-        addr_bits = (depth - 1).bit_length()
+        addr_bits = (self.depth - 1).bit_length()
         super().__init__({"bus":In(BusPort(addr = addr_bits, data = 16))})
 
-        self.m = Memory(
-            width = 16,
-            depth = depth,
-            name = "basicram",
-            init = contents,
-        )
-
         self.read_only = False
+        self.file_name = file_name 
 
+    def _decode(self):
+        bootloader = Path(self.file_name).read_bytes()
+        self.contents = struct.unpack("<" + "h" * (len(bootloader) // 2), bootloader)
+    
+
+    def fetch(self):
+        "Load a filename"
+        try:
+            os.stat(self.file_name)
+            # if we reach here the file exists
+            self._decode()
+        except:
+            print("file does not exist ",self.file_name)
+            # get the file data (Succesfull, [image contents])
+            if self.build():
+                self._decode()
+            else:
+                raise Exception("File build failed")
+        
+    ## override for building firmwares , bootloader in subclasses
+    def build(self):
+        return False
+    
     def elaborate(self, platform):
         m = Module()
 
-        m.submodules.m = self.m
+        if self.file_name is not None: 
+            self.contents = self.fetch()
 
-        rp = self.m.read_port(transparent = False)
+        print(self.contents)
+        mem = Memory(
+            width = 16,
+            depth = self.depth,
+            name = "basicram",
+            init = self.contents,
+        )
+
+        m.submodules += mem
+
+        rp = mem.read_port(transparent = False)
 
 
         m.d.comb += [
@@ -74,7 +111,7 @@ class BasicMemory(Component):
         ]
 
         if not self.read_only:
-            wp = self.m.write_port(granularity = 8)
+            wp = mem.write_port(granularity = 8)
             m.d.comb += [
                 wp.addr.eq(self.bus.cmd.payload.addr),
                 wp.data.eq(self.bus.cmd.payload.data),
