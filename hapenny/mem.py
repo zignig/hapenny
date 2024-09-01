@@ -56,7 +56,6 @@ class BasicMemory(Component):
         self.contents = contents
 
         self.addr_bits = (self.depth - 1).bit_length()
-        log.critical(f"memory address bits {self.addr_bits}")
         super().__init__({"bus": In(BusPort(addr=self.addr_bits, data=16))})
 
         self.read_only = False
