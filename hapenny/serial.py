@@ -2,13 +2,15 @@ from amaranth import *
 from amaranth.lib.wiring import *
 from amaranth.lib.enum import *
 from amaranth.lib.coding import Encoder, Decoder
+import amaranth.lib.cdc
 
 from hapenny import StreamSig, AlwaysReady, mux, oneof
 from hapenny.bus import BusPort
 
-import logging 
+import logging
 
 log = logging.getLogger(__name__)
+
 
 class ReceiveCore(Component):
     rx: In(1)
@@ -17,7 +19,7 @@ class ReceiveCore(Component):
     empty: Out(1)
     read_strobe: In(1)
 
-    def __init__(self, oversample = 16):
+    def __init__(self, oversample=16):
         super().__init__()
 
         self.oversample = oversample
@@ -34,43 +36,83 @@ class ReceiveCore(Component):
             self.empty.eq(~have_data),
         ]
 
-        m.d.sync += timer.eq(oneof([
-            # Set to delay half a bit period from initial negative edge.
-            (self.sample_clock & (state == 0), (self.oversample // 2) - 1),
-            # Count down in all other states until we reach 0.
-            (self.sample_clock & (state != 0) & (timer != 0), timer - 1),
-            # Once we reach 0, reset to a full bit time.
-            (self.sample_clock & (state != 0) & (timer == 0), self.oversample - 1),
-        ], default = timer))
+        m.d.sync += timer.eq(
+            oneof(
+                [
+                    # Set to delay half a bit period from initial negative edge.
+                    (self.sample_clock & (state == 0), (self.oversample // 2) - 1),
+                    # Count down in all other states until we reach 0.
+                    (self.sample_clock & (state != 0) & (timer != 0), timer - 1),
+                    # Once we reach 0, reset to a full bit time.
+                    (
+                        self.sample_clock & (state != 0) & (timer == 0),
+                        self.oversample - 1,
+                    ),
+                ],
+                default=timer,
+            )
+        )
 
-        m.d.sync += state.eq(oneof([
-            # Leave state 0 if we see the falling edge.
-            (self.sample_clock & (state == 0), ~self.rx),
-            # If it's still low at the midpoint of the start bit, proceed.
-            # Otherwise, treat it as a glitch and reset.
-            (self.sample_clock & (state == 1) & (timer == 0), mux(~self.rx, 2, 0)),
-            # Automatically advance when we've done all the bits in state 2.
-            (self.sample_clock & (state == 2) & (timer == 0), mux(bits_left == 0, 3, 2)),
-            # Automatically advance at the end of the stop bit.
-            (self.sample_clock & (state == 3) & (timer == 0), 0),
-        ], default = state))
+        m.d.sync += state.eq(
+            oneof(
+                [
+                    # Leave state 0 if we see the falling edge.
+                    (self.sample_clock & (state == 0), ~self.rx),
+                    # If it's still low at the midpoint of the start bit, proceed.
+                    # Otherwise, treat it as a glitch and reset.
+                    (
+                        self.sample_clock & (state == 1) & (timer == 0),
+                        mux(~self.rx, 2, 0),
+                    ),
+                    # Automatically advance when we've done all the bits in state 2.
+                    (
+                        self.sample_clock & (state == 2) & (timer == 0),
+                        mux(bits_left == 0, 3, 2),
+                    ),
+                    # Automatically advance at the end of the stop bit.
+                    (self.sample_clock & (state == 3) & (timer == 0), 0),
+                ],
+                default=state,
+            )
+        )
 
-        m.d.sync += bits_left.eq(oneof([
-            # Configure for 7 bits after the first one.
-            (self.sample_clock & (timer == 0), mux(state == 1, 7, bits_left - 1)),
-        ], default = bits_left))
+        m.d.sync += bits_left.eq(
+            oneof(
+                [
+                    # Configure for 7 bits after the first one.
+                    (
+                        self.sample_clock & (timer == 0),
+                        mux(state == 1, 7, bits_left - 1),
+                    ),
+                ],
+                default=bits_left,
+            )
+        )
 
-        m.d.sync += self.rdr.eq(oneof([
-            (self.sample_clock & (state == 2) & (timer == 0), Cat(self.rdr[1:], self.rx)),
-        ], default = self.rdr))
+        m.d.sync += self.rdr.eq(
+            oneof(
+                [
+                    (
+                        self.sample_clock & (state == 2) & (timer == 0),
+                        Cat(self.rdr[1:], self.rx),
+                    ),
+                ],
+                default=self.rdr,
+            )
+        )
 
-        m.d.sync += have_data.eq(oneof([
-            # The way this is expressed, newly arriving data will override the
-            # read strobe -- the two cases will OR if they occur
-            # simultaneously, and the 0 loses.
-            (self.sample_clock & (state == 3) & (timer == 0), self.rx),
-            (self.read_strobe, 0),
-        ], default = have_data))
+        m.d.sync += have_data.eq(
+            oneof(
+                [
+                    # The way this is expressed, newly arriving data will override the
+                    # read strobe -- the two cases will OR if they occur
+                    # simultaneously, and the 0 loses.
+                    (self.sample_clock & (state == 3) & (timer == 0), self.rx),
+                    (self.read_strobe, 0),
+                ],
+                default=have_data,
+            )
+        )
 
         return m
 
@@ -81,7 +123,7 @@ class TransmitCore(Component):
     thr_write: In(AlwaysReady(8))
     busy: Out(1)
 
-    def __init__(self, oversample = 16):
+    def __init__(self, oversample=16):
         super().__init__()
 
         self.oversample = oversample
@@ -92,7 +134,7 @@ class TransmitCore(Component):
         # We use this as a shift register containing: start bit, 8 data bits, 2
         # stop bits. Its LSB is our output state, so it's important that it
         # reset to 1; the other bits can reset to whatever value.
-        thr = Signal(1 + 8, reset = 1)
+        thr = Signal(1 + 8, reset=1)
 
         tx_bits_left = Signal(range(1 + 8 + 2))
         tx_timer = Signal(range(self.oversample))
@@ -128,7 +170,7 @@ class TransmitCore(Component):
 class OversampleClock(Component):
     out: Out(1)
 
-    def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None):
+    def __init__(self, baud_rate=19200, oversample=16, clock_freq=None):
         super().__init__()
         self.baud_rate = baud_rate
         self.oversample = oversample
@@ -145,12 +187,16 @@ class OversampleClock(Component):
         clock_freq = self.clock_freq or platform.default_clk_frequency
         our_freq = self.baud_rate * self.oversample
         divisor = int(round(clock_freq / our_freq))
-        log.info(f"UART configured for {self.baud_rate} from input clock {clock_freq}, divisor = {divisor}")
+        log.info(
+            f"UART configured for {self.baud_rate} from input clock {clock_freq}, divisor = {divisor}"
+        )
         actual_freq = clock_freq / self.oversample / divisor
         freq_error = abs(actual_freq - self.baud_rate) / self.baud_rate
         if freq_error > 1.0:
-            log.critical(f"Actual baud rate will be: {actual_freq} (error: {freq_error * 100:.3}%)")
-        assert freq_error< 0.01, "Error: cannot achieve requested UART frequency"
+            log.critical(
+                f"Actual baud rate will be: {actual_freq} (error: {freq_error * 100:.3}%)"
+            )
+        assert freq_error < 0.01, "Error: cannot achieve requested UART frequency"
 
         sample_clock = Signal(1)
         sample_counter = Signal(range(divisor))
@@ -161,6 +207,7 @@ class OversampleClock(Component):
 
         return m
 
+
 class TransmitOnlyUart(Component):
     """The world's crappiest UART!
 
@@ -169,10 +216,11 @@ class TransmitOnlyUart(Component):
 
     Reads return a status register where bit 0 indicates BUSY.
     """
-    bus: In(BusPort(addr = 0, data = 16))
+
+    bus: In(BusPort(addr=0, data=16))
     tx: Out(1)
 
-    def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None):
+    def __init__(self, baud_rate=19200, oversample=16, clock_freq=None):
         super().__init__()
 
         self.baud_rate = baud_rate
@@ -182,17 +230,16 @@ class TransmitOnlyUart(Component):
     def elaborate(self, platform):
         m = Module()
         m.submodules.clkdiv = clkdiv = OversampleClock(
-            baud_rate = self.baud_rate,
-            oversample = self.oversample,
-            clock_freq = self.clock_freq,
+            baud_rate=self.baud_rate,
+            oversample=self.oversample,
+            clock_freq=self.clock_freq,
         )
 
-        m.submodules.txr = txr = TransmitCore(oversample = self.oversample)
+        m.submodules.txr = txr = TransmitCore(oversample=self.oversample)
         m.d.comb += [
             txr.sample_clock.eq(clkdiv.out),
             self.tx.eq(txr.tx),
             self.bus.resp.eq(txr.busy),
-
             txr.thr_write.payload.eq(self.bus.payload.data[:8]),
         ]
 
@@ -200,6 +247,7 @@ class TransmitOnlyUart(Component):
             m.d.comb += txr.thr_write.valid.eq(1)
 
         return m
+
 
 class ReceiveOnlyUart(Component):
     """The world's other crappiest UART!
@@ -212,10 +260,11 @@ class ReceiveOnlyUart(Component):
 
     And, read sensitive, why not.
     """
-    bus: In(BusPort(addr = 0, data = 16))
+
+    bus: In(BusPort(addr=0, data=16))
     rx: In(1)
 
-    def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None):
+    def __init__(self, baud_rate=19200, oversample=16, clock_freq=None):
         super().__init__()
 
         self.baud_rate = baud_rate
@@ -225,12 +274,12 @@ class ReceiveOnlyUart(Component):
         m = Module()
 
         m.submodules.clkdiv = clkdiv = OversampleClock(
-            baud_rate = self.baud_rate,
-            oversample = self.oversample,
-            clock_freq = self.clock_freq,
+            baud_rate=self.baud_rate,
+            oversample=self.oversample,
+            clock_freq=self.clock_freq,
         )
 
-        m.submodules.rxr = rxr = ReceiveCore(oversample = self.oversample)
+        m.submodules.rxr = rxr = ReceiveCore(oversample=self.oversample)
         m.d.comb += [
             rxr.rx.eq(self.rx),
             rxr.sample_clock.eq(clkdiv.out),
@@ -244,6 +293,7 @@ class ReceiveOnlyUart(Component):
 
         return m
 
+
 class BidiUart(Component):
     """A slightly less crappy UART.
 
@@ -255,29 +305,50 @@ class BidiUart(Component):
     0x0000   RDR - data in low 8 bits, empty flag in bit 15, read-sensitive
     0x0002   THR - reads as 0 if TX is idle, writes send low 8 bits
     """
-    bus: In(BusPort(addr = 1, data = 16))
+
+    bus: In(BusPort(addr=1, data=16))
     tx: In(1)
     rx: In(1)
 
-    def __init__(self, baud_rate = 19200, oversample = 16, clock_freq = None):
+    def __init__(self, baud_rate=19200, oversample=16, clock_freq=None):
         super().__init__()
 
         self.baud_rate = baud_rate
         self.oversample = oversample
         self.clock_freq = clock_freq
 
+        self._bound = False
+
+    def bind(self, m, uart):
+        rx_post_sync = Signal()
+        m.submodules.rxsync = amaranth.lib.cdc.FFSynchronizer(
+            i=uart.rx.i,
+            o=rx_post_sync,
+            o_domain="sync",
+            init=1,
+            stages=2,
+        )
+        m.d.comb += [
+            uart.tx.o.eq(self.tx),
+            self.rx.eq(rx_post_sync),
+        ]
+        self._bound = True
+
     def elaborate(self, platform):
+        if not self._bound:
+            log.critical("uart not attched")
+            raise Exception("uart not attached")
         m = Module()
 
         # Clock divider for sampling
         m.submodules.clkdiv = clkdiv = OversampleClock(
-            baud_rate = self.baud_rate,
-            oversample = self.oversample,
-            clock_freq = self.clock_freq,
+            baud_rate=self.baud_rate,
+            oversample=self.oversample,
+            clock_freq=self.clock_freq,
         )
 
         # Receive state machine.
-        m.submodules.rxr = rxr = ReceiveCore(oversample = self.oversample)
+        m.submodules.rxr = rxr = ReceiveCore(oversample=self.oversample)
         m.d.comb += [
             rxr.rx.eq(self.rx),
             rxr.sample_clock.eq(clkdiv.out),
@@ -285,7 +356,7 @@ class BidiUart(Component):
 
         # Transmit machine.
 
-        m.submodules.txr = txr = TransmitCore(oversample = self.oversample)
+        m.submodules.txr = txr = TransmitCore(oversample=self.oversample)
         m.d.comb += [
             txr.sample_clock.eq(clkdiv.out),
             self.tx.eq(txr.tx),
@@ -295,14 +366,14 @@ class BidiUart(Component):
         # time the output is read. This is particularly a problem for the
         # read-sensitive RDR register.
         m.d.sync += [
-            self.bus.resp[:8].eq(mux(
-                self.bus.cmd.payload.addr[0],
-                txr.busy,
-                rxr.rdr,
-            )),
-            self.bus.resp[15].eq(
-                ~self.bus.cmd.payload.addr[0] & rxr.empty
+            self.bus.resp[:8].eq(
+                mux(
+                    self.bus.cmd.payload.addr[0],
+                    txr.busy,
+                    rxr.rdr,
+                )
             ),
+            self.bus.resp[15].eq(~self.bus.cmd.payload.addr[0] & rxr.empty),
         ]
 
         # Read-sense logic for receive side.
@@ -322,4 +393,3 @@ class BidiUart(Component):
         )
 
         return m
-

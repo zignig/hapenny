@@ -45,20 +45,19 @@ class BasicMemory(Component):
     """
 
     def __init__(
-        self, *, depth=None, file_name=None, contents=[], size=None, read_only=False
+        self, *, depth=None, file_name=None, contents=[], read_only=False
     ):
 
-        if depth is not None:
-            self.depth = depth
+        if depth is None:
+            assert len(contents) > 0, "either depth or contents must be provided"
+            depth = len(contents)
 
-        if size is not None:
-            self.size = size
-            self.depth = size
-
+        self.depth = depth
         self.contents = contents
 
-        addr_bits = (self.depth - 1).bit_length()
-        super().__init__({"bus": In(BusPort(addr=addr_bits, data=16))})
+        self.addr_bits = (self.depth - 1).bit_length()
+        log.critical(f"memory address bits {self.addr_bits}")
+        super().__init__({"bus": In(BusPort(addr=self.addr_bits, data=16))})
 
         self.read_only = False
         self.file_name = file_name
