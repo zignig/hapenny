@@ -63,7 +63,7 @@ class BasicMemory(Component):
 
     def _decode(self):
         bootloader = Path(self.file_name).read_bytes()
-        boot_image = struct.unpack("<" + "h" * (len(bootloader) // 2), bootloader)
+        boot_image = struct.unpack("<" + "H" * (len(bootloader) // 2), bootloader)
         return boot_image
 
     def fetch(self):
