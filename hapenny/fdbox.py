@@ -35,7 +35,7 @@ class FDBox(Component):
         cycle of the instruction. We use this to gate register reads.
     """
     onehot_state: In(STATE_COUNT)
-    rf_cmd: Out(AlwaysReady(6))
+    rf_cmd: Out(AlwaysReady(5))
     inst_next: Out(32)
     from_the_top: In(1)
 

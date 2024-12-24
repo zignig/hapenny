@@ -85,11 +85,11 @@ class EWBox(Component):
         s-box to maintain it.
     """
     onehot_state: In(STATE_COUNT)
-    rf_read_cmd: Out(AlwaysReady(6))
+    rf_read_cmd: Out(AlwaysReady(5))
     rf_resp: In(16)
     inst_next: In(32)
     from_the_top: Out(1)
-    rf_write_cmd: Out(AlwaysReady(RegWrite(6)))
+    rf_write_cmd: Out(AlwaysReady(RegWrite(5)))
     full: Out(1)
     hold: Out(1)
 
