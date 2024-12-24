@@ -24,9 +24,9 @@ class DecodeSignals(Struct):
 
     opcode: unsigned(5)
     funct3: unsigned(3)
-    rs1: unsigned(5)
-    rs2: unsigned(5)
-    rd: unsigned(5)
+    rs1: unsigned(4)
+    rs2: unsigned(4)
+    rd: unsigned(4)
 
     is_auipc: unsigned(1)
     is_lui: unsigned(1)
@@ -95,9 +95,11 @@ class Decoder(Component):
             self.out.inst.eq(self.inst),
             self.out.opcode.eq(opcode),
             self.out.funct3.eq(self.inst[12:15]),
-            self.out.rs1.eq(self.inst[15:20]),
-            self.out.rs2.eq(self.inst[20:25]),
-            self.out.rd.eq(self.inst[7:12]),
+            # changed to 4 bits 
+            self.out.rs1.eq(self.inst[15:19]),
+            self.out.rs2.eq(self.inst[20:24]),
+            self.out.rd.eq(self.inst[7:11]),
+            # 4 bit decode end
             self.out.is_auipc.eq(opcode == Opcode.AUIPC),
             self.out.is_lui.eq(opcode == Opcode.LUI),
             self.out.is_jal.eq(opcode == Opcode.JAL),

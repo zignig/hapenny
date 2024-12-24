@@ -86,7 +86,7 @@ class FDBox(Component):
                 (self.from_the_top & self.onehot_state[3],
                  Cat(self.inst[15], self.bus.resp[0:4], 0)),
                 (self.from_the_top & ~self.onehot_state[3],
-                 Cat(self.inst[15:20], 0)),
+                 Cat(self.inst[15:19], 0)),
             ])),
 
             # Forward the instruction through so it's valid in states 3+. In

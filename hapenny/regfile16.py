@@ -6,7 +6,7 @@ from amaranth.lib.enum import *
 
 from hapenny import StreamSig, AlwaysReady
 
-def RegWrite(addrbits = 5):
+def RegWrite(addrbits = 4):
     return Signature({
         'reg': Out(addrbits),
         'value': Out(16),
@@ -22,7 +22,7 @@ class RegFile16(Component):
         self.banks = banks
 
         # 5 bits for x0..x31, 1 bit for top vs bottom half, then bank bits
-        select_bits = 5 + 1 + (banks - 1).bit_length()
+        select_bits = 4 + 1 + (banks - 1).bit_length()
 
         self.read_cmd = AlwaysReady(select_bits).flip().create()
         self.write_cmd = AlwaysReady(RegWrite(select_bits)).flip().create()
@@ -30,7 +30,7 @@ class RegFile16(Component):
     def elaborate(self, platform):
         m = Module()
 
-        nregs = 32 * self.banks
+        nregs = 16 * self.banks
 
         m.submodules.mem = mem = Memory(
             width = 16,
@@ -53,7 +53,7 @@ class RegFile16(Component):
             wp.addr.eq(self.write_cmd.payload.reg),
             wp.data.eq(self.write_cmd.payload.value),
             # Block writes to both halves of x0 in all banks.
-            wp.en.eq((self.write_cmd.payload.reg[:5] != 0) & self.write_cmd.valid),
+            wp.en.eq((self.write_cmd.payload.reg[:4] != 0) & self.write_cmd.valid),
         ]
 
         return m
