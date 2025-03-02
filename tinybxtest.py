@@ -23,7 +23,7 @@ RAM_ADDR_BITS = (RAM_WORDS - 1).bit_length()
 BUS_ADDR_BITS = RAM_ADDR_BITS + 1
 
 bootloader = Path("tinybx8k.bin").read_bytes()
-boot_image = struct.unpack("<" + "h" * (len(bootloader) // 2), bootloader)
+boot_image = struct.unpack("<" + "H" * (len(bootloader) // 2), bootloader)
 
 
 class Test(Elaboratable):
