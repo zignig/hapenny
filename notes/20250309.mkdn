@@ -1,0 +1,19 @@
+# Wishbone conversion
+
+I have found the need to convert the hapenny bus to a bus with a stall function.
+
+Mainly for 8 bit csr that needs an extra cycle or two to read multiple bytes. 
+It also means that XIP flash should be possible.
+
+Anyway , this is major surgery. So it may take a while....
+
+
+Apparent things to do.
+
+1. add amaranth-soc 
+1. add a 16bit Wishbone to the cpu 
+1. wire it into fdbox and the ewbox 
+1. rewrite the memory (to start) to the new bus
+    1.1 check other socs for a wishbone bram memory.
+
+

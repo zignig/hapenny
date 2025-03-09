@@ -335,9 +335,9 @@ class BidiUart(Component):
         self._bound = True
 
     def elaborate(self, platform):
-        if not self._bound:
-            log.critical("uart not attched")
-            raise Exception("uart not attached")
+#        if not self._bound:
+#            log.critical("uart not attched")
+#            raise Exception("uart not attached")
         m = Module()
 
         # Clock divider for sampling

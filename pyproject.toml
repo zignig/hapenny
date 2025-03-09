@@ -3,15 +3,16 @@ dynamic = ["version"]
 
 name = "hapenny"
 
-requires-python = "~=3.8"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
 dependencies = [
-    "amaranth[builtin-yosys]@git+https://github.com/amaranth-lang/amaranth",
+    "amaranth[builtin-yosys] @ git+https://github.com/amaranth-lang/amaranth@v0.5.4 ",
     "amaranth-boards@git+https://github.com/amaranth-lang/amaranth-boards",
+    "amaranth_soc @ git+https://github.com/amaranth-lang/amaranth-soc",
+    "yowasp-nextpnr-ice40",
     "yowasp-yosys",
 ]
-
-[project.optional-dependencies]
-debug = ["jtagtap"]
 
 [build-system]
 requires = ["pdm-backend"]

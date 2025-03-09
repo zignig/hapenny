@@ -67,7 +67,7 @@ class Test(Elaboratable):
             i=uartpins.rx.i,
             o=rx_post_sync,
             o_domain="sync",
-            reset=1,
+            init=1,
             stages=2,
         )
         m.d.comb += [
