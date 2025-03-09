@@ -1,3 +1,5 @@
+# this is being depreciated in favour of a wishbone.
+
 from functools import reduce
 
 from amaranth import *

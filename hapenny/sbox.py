@@ -2,7 +2,7 @@
 
 from amaranth import *
 from amaranth.lib.wiring import *
-from amaranth.lib.enum import *
+from amaranth.lib import enum
 from amaranth.lib.coding import Encoder, Decoder
 
 from hapenny import StreamSig, AlwaysReady
@@ -12,6 +12,16 @@ from hapenny.bus import BusPort
 # additional for halt. (Note that repeated states when e.g. shifting do not
 # count as unique states.)
 STATE_COUNT = 6 + 1
+
+class STATES(enum.Enum):
+    ONE = 1 
+    TWO = 2 
+    THREE = 4
+    FIVE = 8
+    SIX = 16
+    SEVEN = 32
+    EIGHT = 64
+    NINE = 128
 
 class SBox(Component):
     """The S-Box sequences the other components.
@@ -41,7 +51,9 @@ class SBox(Component):
     halt_request: In(1)
     not_a_bubble: In(1)
 
-    onehot_state: Out(STATE_COUNT,init=1)
+    # onehot_state: Out(STATE_COUNT,init=1)
+    onehot_state: Out(STATES,init=1)
+
     halted: Out(1)
 
     def __init__(self):

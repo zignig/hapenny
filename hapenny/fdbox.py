@@ -7,7 +7,10 @@ from amaranth.lib.coding import Encoder, Decoder
 
 from hapenny import StreamSig, AlwaysReady, onehot_choice, mux, oneof
 from hapenny.sbox import STATE_COUNT
-from hapenny.bus import BusPort
+
+# from hapenny.bus import BusPort
+from amaranth_soc import wishbone
+
 
 class FDBox(Component):
     """The FD-Box fetches and decodes instructions.
@@ -34,19 +37,22 @@ class FDBox(Component):
     from_the_top (input): signal from EW indicating that this is the final
         cycle of the instruction. We use this to gate register reads.
     """
+
     onehot_state: In(STATE_COUNT)
     rf_cmd: Out(AlwaysReady(6))
     inst_next: Out(32)
     from_the_top: In(1)
 
-    def __init__(self, *,
-                 prog_addr_width = 32,
-                 ):
-        super().__init__()
+    def __init__(
+        self,
+        *,
+        prog_addr_width=32,
+    ):
 
-        # Create a bus port of sufficient width to fetch instructions only.
-        # (Width is -1 because we're addressing halfwords.)
-        self.bus = BusPort(addr = prog_addr_width - 1, data = 16).create()
+        super().__init__()
+        self.bus = wishbone.Signature(
+            addr_width=prog_addr_width, data_width=16, granularity=8
+        ).create()
 
         # The PC width is -2 because it's addressing words.
         self.pc = AlwaysReady(prog_addr_width - 2).flip().create()
@@ -65,16 +71,23 @@ class FDBox(Component):
 
         m.d.comb += [
             # We issue bus transactions in states 1 and 2 only.
-            self.bus.cmd.valid.eq(
+            self.bus.cyc.eq(
+                self.pc.valid & (self.onehot_state[1] | self.onehot_state[2])
+            ),
+            self.bus.stb.eq(
                 self.pc.valid & (self.onehot_state[1] | self.onehot_state[2])
             ),
             # In those states we select the bottom and top halves of the
             # instruction, respectively.
-            self.bus.cmd.payload.addr.eq(onehot_choice(self.onehot_state, {
-                1: Cat(0, self.pc.payload),
-                2: Cat(1, self.pc.payload),
-            })),
-
+            self.bus.adr.eq(
+                onehot_choice(
+                    self.onehot_state,
+                    {
+                        1: Cat(0, self.pc.payload),
+                        2: Cat(1, self.pc.payload),
+                    },
+                )
+            ),
             # We access the register file only in the last cycle.
             self.rf_cmd.valid.eq(self.from_the_top),
             # If the last cycle is state 3, our fetch is still completing, so
@@ -82,38 +95,51 @@ class FDBox(Component):
             # isn't state 3, we can serve out of our inst register.
             # (It's important to send zeros in other states instead of
             # hardwiring this so that we can OR.)
-            self.rf_cmd.payload.eq(oneof([
-                (self.from_the_top & self.onehot_state[3],
-                 Cat(self.inst[15], self.bus.resp[0:4], 0)),
-                (self.from_the_top & ~self.onehot_state[3],
-                 Cat(self.inst[15:20], 0)),
-            ])),
-
+            self.rf_cmd.payload.eq(
+                oneof(
+                    [
+                        (
+                            self.from_the_top & self.onehot_state[3],
+                            Cat(self.inst[15], self.bus.dat_r[0:4], 0),
+                        ),
+                        (
+                            self.from_the_top & ~self.onehot_state[3],
+                            Cat(self.inst[15:20], 0),
+                        ),
+                    ]
+                )
+            ),
             # Forward the instruction through so it's valid in states 3+. In
             # state 3 specifically, forward the top half from the bus. In other
             # states, serve up the contents of our registers. EW's not supposed
             # to look at this in states 0-2.
             self.inst_next[:16].eq(self.inst[:16]),
-            self.inst_next[16:].eq(mux(
-                self.onehot_state[3],
-                self.bus.resp,
-                self.inst[16:],
-            )),
+            self.inst_next[16:].eq(
+                mux(
+                    self.onehot_state[3],
+                    self.bus.dat_r,
+                    self.inst[16:],
+                )
+            ),
         ]
 
         m.d.sync += [
             # Latch the bottom half of the instruction at the end of state 2.
-            self.inst[:16].eq(mux(
-                self.onehot_state[2],
-                self.bus.resp,
-                self.inst[:16],
-            )),
+            self.inst[:16].eq(
+                mux(
+                    self.onehot_state[2],
+                    self.bus.dat_r,
+                    self.inst[:16],
+                )
+            ),
             # Latch the top half at the end of state 3.
-            self.inst[16:].eq(mux(
-                self.onehot_state[3],
-                self.bus.resp,
-                self.inst[16:],
-            )),
+            self.inst[16:].eq(
+                mux(
+                    self.onehot_state[3],
+                    self.bus.dat_r,
+                    self.inst[16:],
+                )
+            ),
         ]
 
         return m
