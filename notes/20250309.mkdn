@@ -17,3 +17,9 @@ Apparent things to do.
     1.1 check other socs for a wishbone bram memory.
 
 
+---- 
+
+Ok , got the FD box working. EW box , does not seem to be doing  the stuff
+Jumps missing. 
+
+Need to check the ack signal going through the to the arbiter.

@@ -8,7 +8,7 @@ import struct
 from pathlib import Path
 
 class WBMem(Component):
-    def __init__(self,writeable=True):
+    def __init__(self,name="mem",writeable=True):
         self.writeable = writeable
         super().__init__(
             {
@@ -17,10 +17,13 @@ class WBMem(Component):
                 ))
             }
         )
-        bootloader = Path('code').read_bytes()
+        bootloader = Path('/opt/patina/experiments/bin/spinner').read_bytes()
         boot_image = struct.unpack("<" + "H" * (len(bootloader) // 2), bootloader)
 
-        self.bus.memory_map = memory.MemoryMap(addr_width=11,data_width=8)
+        self.bus.memory_map = mm = memory.MemoryMap(addr_width=11,data_width=8)
+
+        mm.add_resource(name=name,size=1024,resource=self)
+
         self._mem = Mem.Memory(depth=64,shape=16,init=boot_image)
 
     def elaborate(self, platform):
@@ -48,5 +51,9 @@ class WBMem(Component):
             m.d.comb += mem_wp.data.eq(self.bus.dat_w)
             with m.If(self.bus.cyc & self.bus.stb & self.bus.we):
                 m.d.comb += mem_wp.en.eq(self.bus.sel)
+
+        # reset the ack
+        with m.If(self.bus.ack):
+            m.d.sync += self.bus.ack.eq(0)
 
         return m

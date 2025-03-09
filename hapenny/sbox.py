@@ -13,15 +13,16 @@ from hapenny.bus import BusPort
 # count as unique states.)
 STATE_COUNT = 6 + 1
 
+# one hot binary
 class STATES(enum.Enum):
-    ONE = 1 
-    TWO = 2 
-    THREE = 4
-    FIVE = 8
-    SIX = 16
-    SEVEN = 32
-    EIGHT = 64
-    NINE = 128
+    SYNC = 1  # 0
+    FETCH_L = 2 # 1 
+    FETCH_H = 4 # 2
+    DECODE = 8 # 3
+    NOTH_0 = 16 # 4
+    NOTH_1 = 32 # 5
+    NOTH_2 = 64 # 6
+    NOTH_3 = 128 # 7
 
 class SBox(Component):
     """The S-Box sequences the other components.
@@ -51,8 +52,8 @@ class SBox(Component):
     halt_request: In(1)
     not_a_bubble: In(1)
 
-    # onehot_state: Out(STATE_COUNT,init=1)
-    onehot_state: Out(STATES,init=1)
+    onehot_state: Out(STATE_COUNT,init=1)
+    # onehot_state: Out(STATES,init=1)
 
     halted: Out(1)
 

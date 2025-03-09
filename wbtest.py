@@ -9,6 +9,9 @@ class Test(Elaboratable):
         super().__init__()
         self.cpu = Cpu()
         self.mem = WBMem()
+        self.mem2 = WBMem(name="bootloader")
+        self.cpu.dec.add(self.mem.bus)
+        self.cpu.dec.add(self.mem2.bus)
 
     def elaborate(self, platform):
         m = Module()
@@ -16,8 +19,8 @@ class Test(Elaboratable):
 
         m.submodules.cpu = self.cpu
         m.submodules.mem = self.mem
+        m.submodules.mem2 = self.mem2
 
-        self.cpu.dec.add(self.mem.bus)
 
         return m 
 
@@ -34,6 +37,8 @@ from amaranth.sim import Simulator
 
 if __name__ == "__main__":
     pooter = Test()
+    for i in pooter.cpu.dec.bus.memory_map.all_resources():
+        print(i.path,i.start,i.end)
     sim = Simulator(pooter)
     sim.add_clock(1e-6)
     sim.add_testbench(bench)

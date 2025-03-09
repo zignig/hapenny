@@ -204,8 +204,9 @@ class Cpu(Component):
         m.submodules.arb = self.arb
         m.submodules.dec = self.dec
 
+        # attach the boxes  to the arbiter
         self.arb.add(fd.bus)
-        # self.arb.add(ew.bus)
+        self.arb.add(ew.bus)
 
         connect(m, self.arb.bus, self.dec.bus)
         # m.d.comb += [
