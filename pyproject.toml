@@ -3,7 +3,7 @@ dynamic = ["version"]
 
 name = "hapenny"
 
-requires-python = "~=3.8"
+requires-python = "~=3.9"
 dependencies = [
     "amaranth[builtin-yosys]@git+https://github.com/amaranth-lang/amaranth",
     "amaranth-boards@git+https://github.com/amaranth-lang/amaranth-boards",
